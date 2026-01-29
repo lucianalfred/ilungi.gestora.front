@@ -9,7 +9,7 @@ export const TRANSLATIONS = {
     contracts: 'Contratos',
     clients: 'Clientes',
     articles: 'Artigos',
-    events: 'Atividades',
+    events: 'Actividades',
     tasks: 'Gestão de Tarefas',
     invoicing: 'Faturação',
     nonConformities: 'Conformidades',
