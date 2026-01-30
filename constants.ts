@@ -9,7 +9,7 @@ export const TRANSLATIONS = {
     contracts: 'Contratos',
     clients: 'Clientes',
     articles: 'Artigos',
-    events: 'Atividades',
+    events: 'Actividades',
     tasks: 'Gestão de Tarefas',
     invoicing: 'Faturação',
     nonConformities: 'Conformidades',
@@ -35,7 +35,7 @@ export const TRANSLATIONS = {
     status: 'Estado Atual',
     updateStatus: 'Avançar Status',
     closeTask: 'Validar e Fechar',
-    latestUpdates: 'Atividade Recente',
+    latestUpdates: 'Actividade Recente',
     notifications: 'Notificações',
     overdue: 'Atrasada',
     extendDeadline: 'Prorrogar Prazo',
@@ -96,7 +96,7 @@ export const TRANSLATIONS = {
     validationFeedback: 'Feedback de Validação',
     validatedBy: 'Validado por',
     validatedAt: 'Validado em',
-    recentActivity: 'Atividade Recente',
+    recentActivity: 'Actividade Recente',
     taskCreated: 'Tarefa criada com sucesso',
     taskUpdated: 'Tarefa atualizada',
     taskDeleted: 'Tarefa deletada',
@@ -265,9 +265,10 @@ export const TRANSLATIONS = {
 };
 
 export const MOCK_USERS: any[] = [
-  { id: 'u-admin', name: 'Luciano Alfredo', email: 'admin@gestora.com', password: 'adminpass', role: UserRole.ADMIN, position: 'Diretor Geral', department: 'Diretoria' },
-  { id: 'u-emp1', name: 'João Silva', email: 'joao@gestora.com', password: 'joaopass', role: UserRole.EMPLOYEE, position: 'Analista Sênior', department: 'TI' },
-  { id: 'u-emp2', name: 'Ana Costa', email: 'ana@gestora.com', password: 'anapass', role: UserRole.EMPLOYEE, position: 'Coordenadora de Projetos', department: 'Operações' }
+  { id: 'u-admin', name: 'Luciano Alfredo', email: 'admin@gestora.com', password: '123', role: UserRole.ADMIN, position: 'Diretor Geral', department: 'Diretoria' },
+  { id: 'u-emp1', name: 'João Silva', email: 'joao@gestora.com', password: '123', role: UserRole.EMPLOYEE, position: 'Analista Sênior', department: 'TI' },
+  { id: 'u-emp2', name: 'Ana Costa', email: 'ana@gestora.com', password: '123', role: UserRole.EMPLOYEE, position: 'Coordenadora de Projetos', department: 'Operações' },
+  { id: 'u-user', name: 'Usuário Padrão', email: 'usuario@gestora.com', password: '123', role: UserRole.EMPLOYEE, position: 'Operador', department: 'Geral' }
 ];
 
 export const INITIAL_TASKS: any[] = [

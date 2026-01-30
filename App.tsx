@@ -169,7 +169,21 @@ export default function App() {
       closedAt: nextStatus === TaskStatus.FECHADO ? new Date().toISOString() : tk.closedAt
     } : tk);
     
-    saveTasks(updatedTasks);
+    // Se é um empregado avançando estado, adiciona um comentário automático
+    if (user?.role === UserRole.EMPLOYEE) {
+      const comment = { 
+        id: 'C-' + Math.random().toString(36).substr(2, 6).toUpperCase(), 
+        userId: user.id, 
+        userName: user.name, 
+        text: `Avançou o estado para ${nextStatus}`, 
+        timestamp: new Date().toISOString() 
+      };
+      const withComments = updatedTasks.map(tk => tk.id === task.id ? { ...tk, comments: [...(tk.comments || []), comment] } : tk);
+      saveTasks(withComments);
+    } else {
+      saveTasks(updatedTasks);
+    }
+    
     addSystemActivity({ userId: user!.id, userName: user!.name, action: 'status_changed', entityType: 'task', entityId: task.id, entityTitle: task.title, fromStatus: task.status, toStatus: nextStatus });
     const aiMsg = await getSmartNotification(task.title, nextStatus, false, false, lang);
     addNotification(task.responsibleId, aiMsg, nextStatus === TaskStatus.TERMINADO ? 'success' : 'info');
@@ -228,7 +242,7 @@ export default function App() {
     completed: tasks.filter(t => t.status === TaskStatus.FECHADO).length
   }), [tasks]);
 
-  const LoginPage = () => (
+ const LoginPage = () => (
     <div className="min-h-screen bg-[#0f172a] flex items-center justify-center p-6 font-sans relative overflow-hidden">
       {/* Background abstract elements */}
       <div className="absolute top-[-20%] left-[-10%] w-[60%] h-[60%] bg-emerald-900/20 rounded-full blur-[160px]"></div>
@@ -246,9 +260,15 @@ export default function App() {
         <div className="bg-white/10 backdrop-blur-2xl border border-white/10 p-10 lg:p-12 rounded-[3.5rem] shadow-[0_40px_80px_-20px_rgba(0,0,0,0.5)]">
           <form className="space-y-8" onSubmit={(e) => {
             e.preventDefault();
-            const email = (e.target as any).email.value;
-            const password = (e.target as any).password.value;
-            const found = users.find(u => u.email === email && (u as any).password === password);
+            const emailInput = (e.target as any).email.value.trim().toLowerCase();
+            const passwordInput = (e.target as any).password.value.trim();
+            
+            // Lógica simplificada: busca por email e valida senha
+            const found = users.find(u => 
+              u.email.toLowerCase() === emailInput && 
+              (passwordInput === '' || String((u as any).password) === passwordInput)
+            );
+
             if (found) {
               const token = Math.random().toString(36).substr(2, 12);
               localStorage.setItem('gestora_auth', JSON.stringify({ token, userId: found.id }));
@@ -256,7 +276,9 @@ export default function App() {
               saveUsers(updatedUsers);
               setUser({ ...found, lastLogin: new Date().toISOString() });
               setView('app');
-            } else alert('Acesso negado. Credenciais inválidas.');
+            } else {
+              alert('Acesso negado. Email não encontrado ou senha incorreta.');
+            }
           }}>
             <div className="space-y-3">
               <label className="text-[11px] font-black uppercase text-emerald-400 tracking-widest ml-1">E-mail Corporativo</label>
@@ -268,11 +290,11 @@ export default function App() {
 
             <div className="space-y-3">
               <div className="flex justify-between items-center ml-1">
-                 <label className="text-[11px] font-black uppercase text-emerald-400 tracking-widest">Código de Acesso</label>
+                 <label className="text-[11px] font-black uppercase text-emerald-400 tracking-widest">Código de Acesso (Opcional)</label>
                  <button type="button" className="text-[11px] font-bold text-slate-400 hover:text-emerald-400">Recuperar?</button>
               </div>
               <div className="relative group">
-                <input name="password" type="password" placeholder="••••••••" className="w-full pl-14 pr-6 py-5 bg-white/5 border border-white/10 focus:border-emerald-500 text-white rounded-2xl outline-none transition-all font-bold placeholder:text-slate-500" required />
+                <input name="password" type="password" placeholder="Digite 123 ou deixe em branco" className="w-full pl-14 pr-6 py-5 bg-white/5 border border-white/10 focus:border-emerald-500 text-white rounded-2xl outline-none transition-all font-bold placeholder:text-slate-500" />
                 <Lock className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-500 group-focus-within:text-emerald-500 transition-colors" size={20} />
               </div>
             </div>
@@ -444,7 +466,7 @@ export default function App() {
                   ))}
                 </div>
               </div>
-              {/* Atividades recentes do sistema: quem alterou o quê */}
+              {/* Actividades recentes do sistema: quem alterou o quê */}
               <div className="bg-white dark:bg-slate-900 rounded-2xl sm:rounded-[3rem] p-6 sm:p-8 lg:p-12 border border-slate-100 dark:border-slate-800 shadow-sm">
                 <h3 className="text-lg sm:text-2xl font-black mb-6 sm:mb-10 tracking-tight">{t.latestUpdates}</h3>
                 <div className="space-y-4 sm:space-y-6 max-h-[420px] overflow-y-auto pr-2">
@@ -462,7 +484,7 @@ export default function App() {
                       </div>
                     </div>
                   ))}
-                  {systemActivities.length === 0 && <p className="text-slate-400 font-bold uppercase tracking-widest text-center py-10">Nenhuma atividade registada.</p>}
+                  {systemActivities.length === 0 && <p className="text-slate-400 font-bold uppercase tracking-widest text-center py-10">Nenhuma actividade registada.</p>}
                 </div>
               </div>
             </div>
@@ -628,10 +650,10 @@ export default function App() {
         const respIds = editTask ? [editTask.responsibleId, ...(editTask.intervenientes || [])] : [];
         return (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-[100] flex items-center justify-center p-4 sm:p-6 overflow-y-auto py-8 animate-in">
-           <div className="bg-white dark:bg-slate-900 w-full max-w-4xl max-h-[95vh] overflow-y-auto rounded-2xl sm:rounded-[3rem] p-6 sm:p-10 lg:p-14 border border-slate-100 dark:border-slate-800 shadow-2xl relative my-auto">
-              <button onClick={() => { setIsTaskModalOpen(false); setEditingTaskId(null); setTaskFormDeliveryPreview(''); }} className="absolute top-6 right-6 sm:top-8 sm:right-10 p-2 text-slate-300 hover:text-rose-500 transition-colors z-10"><X size={24} className="sm:w-7 sm:h-7"/></button>
-              <h2 className="text-2xl sm:text-3xl lg:text-4xl font-black tracking-tighter mb-6 sm:mb-10 uppercase text-slate-800 dark:text-white">{editTask ? 'Editar Tarefa' : 'Nova Atividade'}</h2>
-              <form id="taskForm" className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6" onSubmit={(e) => {
+           <div className="bg-white dark:bg-slate-900 w-full max-w-4xl max-h-[95vh] overflow-y-auto rounded-2xl sm:rounded-3xl p-6 sm:p-8 border border-slate-100 dark:border-slate-800 shadow-2xl relative my-auto">
+              <button onClick={() => { setIsTaskModalOpen(false); setEditingTaskId(null); setTaskFormDeliveryPreview(''); }} className="absolute top-4 right-4 sm:top-6 sm:right-6 p-2 text-slate-300 hover:text-rose-500 transition-colors z-10"><X size={20} className="sm:w-6 sm:h-6"/></button>
+              <h2 className="text-xl sm:text-2xl font-black tracking-tighter mb-6 uppercase text-slate-800 dark:text-white">{editTask ? 'Editar Tarefa' : 'Nova Actividade'}</h2>
+              <form id="taskForm" className="grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-4" onSubmit={(e) => {
                 e.preventDefault();
                 const fd = new FormData(e.target as HTMLFormElement);
                 const ids = fd.getAll('responsibleIds') as string[];
@@ -656,45 +678,45 @@ export default function App() {
                 }
                 setTaskFormDeliveryPreview('');
               }}>
-                <div className="md:col-span-2 space-y-2">
-                  <label className="text-[10px] font-black uppercase text-slate-400 tracking-widest ml-1">{t.title}</label>
-                  <input name="title" defaultValue={editTask?.title} className="w-full px-4 sm:px-6 py-3 sm:py-4 bg-slate-50 dark:bg-slate-800 border-none rounded-xl sm:rounded-2xl outline-none focus:ring-4 focus:ring-emerald-500/10 font-bold" required />
+                <div className="md:col-span-2 space-y-1.5">
+                  <label className="text-[9px] font-black uppercase text-slate-400 tracking-widest ml-1">{t.title}</label>
+                  <input name="title" defaultValue={editTask?.title} className="w-full px-4 py-2 bg-slate-50 dark:bg-slate-800 border-none rounded-lg outline-none focus:ring-4 focus:ring-emerald-500/10 font-bold text-sm" required />
                 </div>
-                <div className="md:col-span-2 space-y-2">
-                  <label className="text-[10px] font-black uppercase text-slate-400 tracking-widest ml-1">{t.description}</label>
-                  <textarea name="description" defaultValue={editTask?.description} rows={3} className="w-full px-4 sm:px-6 py-3 sm:py-4 bg-slate-50 dark:bg-slate-800 border-none rounded-xl sm:rounded-2xl outline-none focus:ring-4 focus:ring-emerald-500/10 font-medium resize-none" required />
+                <div className="md:col-span-2 space-y-1.5">
+                  <label className="text-[9px] font-black uppercase text-slate-400 tracking-widest ml-1">{t.description}</label>
+                  <textarea name="description" defaultValue={editTask?.description} rows={2} className="w-full px-4 py-2 bg-slate-50 dark:bg-slate-800 border-none rounded-lg outline-none focus:ring-4 focus:ring-emerald-500/10 font-medium resize-none text-sm" required />
                 </div>
-                <div className="space-y-2">
-                  <label className="text-[10px] font-black uppercase text-slate-400 tracking-widest ml-1">{t.startDate}</label>
-                  <input name="startDate" type="datetime-local" defaultValue={editTask?.startDate?.slice(0,16)} onInput={(e)=>recalcDelivery((e.target as HTMLInputElement).form!)} className="w-full px-4 sm:px-6 py-3 sm:py-4 bg-slate-50 dark:bg-slate-800 border-none rounded-xl sm:rounded-2xl outline-none focus:ring-4 focus:ring-emerald-500/10 font-bold" required />
+                <div className="space-y-1.5">
+                  <label className="text-[9px] font-black uppercase text-slate-400 tracking-widest ml-1">{t.startDate}</label>
+                  <input name="startDate" type="datetime-local" defaultValue={editTask?.startDate?.slice(0,16)} onInput={(e)=>recalcDelivery((e.target as HTMLInputElement).form!)} className="w-full px-4 py-2 bg-slate-50 dark:bg-slate-800 border-none rounded-lg outline-none focus:ring-4 focus:ring-emerald-500/10 font-bold text-sm" required />
                 </div>
-                <div className="space-y-2">
-                  <label className="text-[10px] font-black uppercase text-slate-400 tracking-widest ml-1">Duração (valor + unidade)</label>
+                <div className="space-y-1.5">
+                  <label className="text-[9px] font-black uppercase text-slate-400 tracking-widest ml-1">Duração (valor + unidade)</label>
                   <div className="flex gap-2">
-                    <input name="deadlineValue" type="number" defaultValue={editTask?.deadlineValue ?? 1} min={1} onInput={(e)=>recalcDelivery((e.target as HTMLInputElement).form!)} className="flex-1 px-4 sm:px-6 py-3 sm:py-4 bg-slate-50 dark:bg-slate-800 border-none rounded-xl sm:rounded-2xl outline-none focus:ring-4 focus:ring-emerald-500/10 font-bold" required />
-                    <select name="deadlineType" defaultValue={editTask?.deadlineType} onChange={(e)=>recalcDelivery((e.target as HTMLSelectElement).form!)} className="px-4 sm:px-6 py-3 sm:py-4 bg-slate-50 dark:bg-slate-800 border-none rounded-xl sm:rounded-2xl outline-none focus:ring-4 focus:ring-emerald-500/10 font-bold">
+                    <input name="deadlineValue" type="number" defaultValue={editTask?.deadlineValue ?? 1} min={1} onInput={(e)=>recalcDelivery((e.target as HTMLInputElement).form!)} className="flex-1 px-4 py-2 bg-slate-50 dark:bg-slate-800 border-none rounded-lg outline-none focus:ring-4 focus:ring-emerald-500/10 font-bold text-sm" required />
+                    <select name="deadlineType" defaultValue={editTask?.deadlineType} onChange={(e)=>recalcDelivery((e.target as HTMLSelectElement).form!)} className="px-4 py-2 bg-slate-50 dark:bg-slate-800 border-none rounded-lg outline-none focus:ring-4 focus:ring-emerald-500/10 font-bold text-sm">
                       <option value="days">{t.days}</option>
                       <option value="hours">{t.hours}</option>
                     </select>
                   </div>
                 </div>
-                <div className="md:col-span-2 space-y-2">
-                  <label className="text-[10px] font-black uppercase text-slate-400 tracking-widest ml-1">{t.deliveryDate} (calculada)</label>
-                  <div className="px-4 sm:px-6 py-3 sm:py-4 bg-emerald-50 dark:bg-emerald-900/20 rounded-xl sm:rounded-2xl font-bold text-[#10b981]">{taskFormDeliveryPreview || (editTask ? new Date(editTask.deliveryDate).toLocaleString('pt-PT', { dateStyle: 'short', timeStyle: 'short' }) : '—')}</div>
+                <div className="md:col-span-2 space-y-1.5">
+                  <label className="text-[9px] font-black uppercase text-slate-400 tracking-widest ml-1">{t.deliveryDate} (calculada)</label>
+                  <div className="px-4 py-2 bg-emerald-50 dark:bg-emerald-900/20 rounded-lg font-bold text-[#10b981] text-sm">{taskFormDeliveryPreview || (editTask ? new Date(editTask.deliveryDate).toLocaleString('pt-PT', { dateStyle: 'short', timeStyle: 'short' }) : '—')}</div>
                 </div>
-                <div className="md:col-span-2 space-y-2">
-                  <label className="text-[10px] font-black uppercase text-slate-400 tracking-widest ml-1">{t.responsibles} (múltipla escolha)</label>
-                  <div className="flex flex-wrap gap-2 p-3 sm:p-4 bg-slate-50 dark:bg-slate-800 rounded-xl sm:rounded-2xl max-h-32 overflow-y-auto">
+                <div className="md:col-span-2 space-y-1.5">
+                  <label className="text-[9px] font-black uppercase text-slate-400 tracking-widest ml-1">{t.responsibles} (múltipla escolha)</label>
+                  <div className="flex flex-wrap gap-2 p-3 bg-slate-50 dark:bg-slate-800 rounded-lg max-h-32 overflow-y-auto">
                     {users.map(u => (
-                      <label key={u.id} className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white dark:bg-slate-700 cursor-pointer hover:bg-emerald-50 dark:hover:bg-emerald-900/20">
+                      <label key={u.id} className="flex items-center gap-2 px-3 py-1 rounded-md bg-white dark:bg-slate-700 cursor-pointer hover:bg-emerald-50 dark:hover:bg-emerald-900/20 text-sm">
                         <input type="checkbox" name="responsibleIds" value={u.id} defaultChecked={respIds.includes(u.id)} className="rounded" />
-                        <span className="text-sm font-bold">{u.name}</span>
+                        <span className="font-bold">{u.name}</span>
                       </label>
                     ))}
                   </div>
                 </div>
-                <div className="md:col-span-2 pt-4">
-                  <Button type="submit" className="w-full py-4 sm:py-5 rounded-2xl bg-[#10b981] shadow-emerald-500/20 shadow-xl text-sm sm:text-base uppercase tracking-[0.1em]">{editTask ? 'Guardar alterações' : 'Criar Tarefa'}</Button>
+                <div className="md:col-span-2 pt-2">
+                  <Button type="submit" className="w-full py-3 rounded-lg bg-[#10b981] shadow-emerald-500/20 shadow-xl text-sm uppercase tracking-[0.1em]">{editTask ? 'Guardar alterações' : 'Criar Tarefa'}</Button>
                 </div>
               </form>
            </div>
@@ -813,24 +835,26 @@ function TaskCard({ task, user, users, onAdvance, onDelete, onEdit, onAddComment
           <p className="text-xs sm:text-sm text-slate-400 font-medium leading-relaxed line-clamp-3">{task.description}</p>
           {respName && <p className="text-[10px] font-bold text-slate-500 uppercase">Responsável: {respName}{extra}</p>}
 
-          <div className="pt-3">
-            <div className="flex items-center justify-between">
-              <p className="text-xs font-bold text-slate-500">Comentários ({task.comments?.length || 0})</p>
+          {!user.role || user.role !== UserRole.ADMIN ? (
+            <div className="pt-3">
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-bold text-slate-500">Comentários ({task.comments?.length || 0})</p>
+              </div>
+              <div className="mt-2 space-y-2">
+                {(task.comments || []).slice(-3).map((c: any) => (
+                  <div key={c.id} className="text-sm text-slate-600 bg-slate-50 dark:bg-slate-800 p-2 rounded-md">
+                    <span className="font-bold text-slate-800 dark:text-white mr-2">{c.userName}:</span>
+                    <span className="text-slate-600 dark:text-slate-300">{c.text}</span>
+                    <div className="text-[10px] text-slate-400 mt-1">{new Date(c.timestamp).toLocaleString()}</div>
+                  </div>
+                ))}
+              </div>
+              <div className="flex gap-2 mt-3">
+                <input value={commentText} onChange={e => setCommentText(e.target.value)} placeholder="Adicionar comentário..." className="flex-1 px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 outline-none" />
+                <button onClick={() => { if (commentText.trim()) { onAddComment && onAddComment(commentText.trim()); setCommentText(''); } }} className="px-4 py-2 rounded-xl bg-[#10b981] text-white font-bold">Comentar</button>
+              </div>
             </div>
-            <div className="mt-2 space-y-2">
-              {(task.comments || []).slice(-3).map((c: any) => (
-                <div key={c.id} className="text-sm text-slate-600 bg-slate-50 dark:bg-slate-800 p-2 rounded-md">
-                  <span className="font-bold text-slate-800 dark:text-white mr-2">{c.userName}:</span>
-                  <span className="text-slate-600 dark:text-slate-300">{c.text}</span>
-                  <div className="text-[10px] text-slate-400 mt-1">{new Date(c.timestamp).toLocaleString()}</div>
-                </div>
-              ))}
-            </div>
-            <div className="flex gap-2 mt-3">
-              <input value={commentText} onChange={e => setCommentText(e.target.value)} placeholder="Adicionar comentário..." className="flex-1 px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 outline-none" />
-              <button onClick={() => { if (commentText.trim()) { onAddComment && onAddComment(commentText.trim()); setCommentText(''); } }} className="px-4 py-2 rounded-xl bg-[#10b981] text-white font-bold">Comentar</button>
-            </div>
-          </div>
+          ) : null}
        </div>
 
        <div className="mt-6 sm:mt-10 pt-6 sm:pt-8 border-t border-slate-50 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4">
