@@ -13,6 +13,8 @@ import {
 } from './types';
 import { MOCK_USERS, TRANSLATIONS, STATUS_COLORS, INITIAL_TASKS } from './constants';
 import { getSmartNotification } from './services/geminiService';
+import { setAuthToken, getAuthToken, apiAuth, apiTasks, apiUsers, apiComments } from './services/apiService';
+import { logger } from './services/logger';
 import { 
   LayoutDashboard, 
   CheckSquare, 
@@ -98,6 +100,13 @@ export default function App() {
     setTasks(savedTasks);
     setUsers(savedUsers);
     setSystemActivities(savedActivities);
+    
+    // Restaurar token de autenticação
+    const savedToken = localStorage.getItem('gestora_api_token');
+    if (savedToken) {
+      setAuthToken(savedToken);
+    }
+    
     try {
       const auth = JSON.parse(localStorage.getItem('gestora_auth') || 'null');
       if (auth && auth.userId) {
@@ -107,7 +116,34 @@ export default function App() {
     } catch (e) {
       // ignore
     }
+    
+    // Tentar sincronizar com a API se token disponível
+    if (savedToken) {
+      loadDataFromAPI();
+    }
   }, []);
+
+  const loadDataFromAPI = async () => {
+    try {
+      // Carregar tarefas da API
+      const tasksData = await apiTasks.getAll();
+      if (tasksData && Array.isArray(tasksData)) {
+        saveTasks(tasksData);
+      }
+    } catch (error) {
+      logger.debug('API', 'Não foi possível carregar tarefas da API, usando dados locais', error);
+    }
+
+    try {
+      // Carregar utilizadores da API
+      const usersData = await apiUsers.getAll();
+      if (usersData && Array.isArray(usersData)) {
+        saveUsers(usersData);
+      }
+    } catch (error) {
+      logger.debug('API', 'Não foi possível carregar utilizadores da API, usando dados locais', error);
+    }
+  };
 
   useEffect(() => {
     if (theme === 'dark') document.documentElement.classList.add('dark');
@@ -131,16 +167,38 @@ export default function App() {
     localStorage.setItem('gestora_users', JSON.stringify(newUsers));
   };
 
-  const addComment = (taskId: string, text: string) => {
+  const addComment = async (taskId: string, text: string) => {
     if (!user) return;
-    const comment = { id: 'C-' + Math.random().toString(36).substr(2, 6).toUpperCase(), userId: user.id, userName: user.name, text, timestamp: new Date().toISOString() };
-    const updatedTasks = tasks.map(t => t.id === taskId ? { ...t, comments: [...(t.comments || []), comment], updatedAt: new Date().toISOString() } : t);
-    saveTasks(updatedTasks);
+    
+    try {
+      // Tentar enviar para API
+      const response = await apiComments.create(taskId, text);
+      if (response && response.id) {
+        // Atualizar localmente com resposta da API
+        const updatedTasks = tasks.map(t => t.id === taskId ? { ...t, comments: [...(t.comments || []), response], updatedAt: new Date().toISOString() } : t);
+        saveTasks(updatedTasks);
+      }
+    } catch (apiError) {
+      logger.warn('Comment', 'API comentário falhou, salvando localmente...', apiError);
+      // Fallback: salvar localmente se API falhar
+      const comment = { id: 'C-' + Math.random().toString(36).substr(2, 6).toUpperCase(), userId: user.id, userName: user.name, text, timestamp: new Date().toISOString() };
+      const updatedTasks = tasks.map(t => t.id === taskId ? { ...t, comments: [...(t.comments || []), comment], updatedAt: new Date().toISOString() } : t);
+      saveTasks(updatedTasks);
+    }
+    
     addSystemActivity({ userId: user.id, userName: user.name, action: 'commented', entityType: 'task', entityId: taskId, entityTitle: tasks.find(x => x.id === taskId)?.title });
   };
 
-  const handleDeleteTask = (task: Task) => {
+  const handleDeleteTask = async (task: Task) => {
     addSystemActivity({ userId: user!.id, userName: user!.name, action: 'deleted', entityType: 'task', entityId: task.id, entityTitle: task.title });
+    
+    try {
+      // Tentar deletar na API
+      await apiTasks.delete(task.id);
+    } catch (apiError) {
+      logger.warn('Task', 'Erro ao deletar na API, deletando localmente...', apiError);
+    }
+    
     saveTasks(tasks.filter(t => t.id !== task.id));
   };
 
@@ -182,6 +240,12 @@ export default function App() {
       saveTasks(withComments);
     } else {
       saveTasks(updatedTasks);
+    }
+    
+    try {
+      await apiTasks.updateStatus(task.id, nextStatus);
+    } catch (error) {
+      logger.warn('Task', 'Erro ao atualizar status na API, atualizado localmente...', error);
     }
     
     addSystemActivity({ userId: user!.id, userName: user!.name, action: 'status_changed', entityType: 'task', entityId: task.id, entityTitle: task.title, fromStatus: task.status, toStatus: nextStatus });
@@ -253,31 +317,44 @@ export default function App() {
           <div className="inline-flex p-4 bg-emerald-500 rounded-3xl shadow-2xl shadow-emerald-500/30 mb-6 transform hover:rotate-6 transition-transform">
              <Workflow size={40} className="text-white"/>
           </div>
-          <h1 className="text-white text-5xl font-black tracking-tighter uppercase mb-2">GESTORA</h1>
-          <p className="text-slate-400 font-bold uppercase tracking-[0.3em] text-[10px]">Professional Workflow Management</p>
+          <h1 className="text-white text-3xl font-black tracking-tighter uppercase mb-2">GESTORA</h1>
+          <p className="text-slate-400 font-bold uppercase tracking-[0.3em] text-[9px]">Professional Workflow Management</p>
         </div>
 
         <div className="bg-white/10 backdrop-blur-2xl border border-white/10 p-10 lg:p-12 rounded-[3.5rem] shadow-[0_40px_80px_-20px_rgba(0,0,0,0.5)]">
-          <form className="space-y-8" onSubmit={(e) => {
+          <form className="space-y-8" onSubmit={async (e) => {
             e.preventDefault();
             const emailInput = (e.target as any).email.value.trim().toLowerCase();
             const passwordInput = (e.target as any).password.value.trim();
             
-            // Lógica simplificada: busca por email e valida senha
-            const found = users.find(u => 
-              u.email.toLowerCase() === emailInput && 
-              (passwordInput === '' || String((u as any).password) === passwordInput)
-            );
+            try {
+              // Tentar login com a API primeiro
+              const apiResponse = await apiAuth.login(emailInput, passwordInput);
+              if (apiResponse.token) {
+                setAuthToken(apiResponse.token);
+                setUser(apiResponse.user || { id: apiResponse.userId, email: emailInput, name: apiResponse.name || 'Utilizador', role: UserRole.EMPLOYEE });
+                setView('app');
+                return;
+              }
+            } catch (apiError) {
+              logger.warn('Auth', 'API login falhou, tentando fallback local...');
+              // Fallback para login local se API falhar
+              const found = users.find(u => 
+                u.email.toLowerCase() === emailInput && 
+                (passwordInput === '' || String((u as any).password) === passwordInput)
+              );
 
-            if (found) {
-              const token = Math.random().toString(36).substr(2, 12);
-              localStorage.setItem('gestora_auth', JSON.stringify({ token, userId: found.id }));
-              const updatedUsers = users.map(u => u.id === found.id ? { ...u, lastLogin: new Date().toISOString() } : u);
-              saveUsers(updatedUsers);
-              setUser({ ...found, lastLogin: new Date().toISOString() });
-              setView('app');
-            } else {
-              alert('Acesso negado. Email não encontrado ou senha incorreta.');
+              if (found) {
+                const token = Math.random().toString(36).substr(2, 12);
+                setAuthToken(token);
+                localStorage.setItem('gestora_auth', JSON.stringify({ token, userId: found.id }));
+                const updatedUsers = users.map(u => u.id === found.id ? { ...u, lastLogin: new Date().toISOString() } : u);
+                saveUsers(updatedUsers);
+                setUser({ ...found, lastLogin: new Date().toISOString() });
+                setView('app');
+              } else {
+                alert('Acesso negado. Email não encontrado ou senha incorreta.');
+              }
             }
           }}>
             <div className="space-y-3">
@@ -342,7 +419,7 @@ export default function App() {
       </nav>
 
       <section className="pt-32 sm:pt-40 md:pt-48 lg:pt-64 pb-32 sm:pb-40 md:pb-56 px-4 sm:px-6 lg:px-8 text-center max-w-6xl mx-auto space-y-8 sm:space-y-12">
-        <h1 className="text-3xl sm:text-4xl md:text-5xl lg:text-[76px] font-black text-slate-800 leading-[1.05] tracking-tight animate-in">
+        <h1 className="text-2xl sm:text-3xl md:text-4xl lg:text-5xl font-black text-slate-800 leading-[1.05] tracking-tight animate-in">
           {t.landingTitle.split(' simples e eficaz')[0]} <span className="text-[#10b981]">simples</span> e <span className="text-[#10b981]">eficaz</span>
         </h1>
         <p className="text-base sm:text-lg lg:text-[20px] text-slate-500 max-w-3xl mx-auto font-medium animate-in leading-relaxed px-2">
@@ -425,7 +502,7 @@ export default function App() {
                  <ChevronLeftCircle size={22} className={`transition-transform duration-500 ${isSidebarCollapsed ? 'rotate-180' : ''}`} />
               </button>
               <div>
-                 <h2 className="text-xl font-black text-slate-900 dark:text-white leading-none capitalize tracking-tight">{t[activeTab as keyof typeof t] || activeTab}</h2>
+                 <h2 className="text-lg font-black text-slate-900 dark:text-white leading-none capitalize tracking-tight">{t[activeTab as keyof typeof t] || activeTab}</h2>
                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">Gestora Enterprise Workspace</p>
               </div>
            </div>
@@ -456,7 +533,7 @@ export default function App() {
               </div>
               {/* Relatório breve: tarefas por estado */}
               <div className="bg-white dark:bg-slate-900 rounded-2xl sm:rounded-[3rem] p-6 sm:p-8 lg:p-10 border border-slate-100 dark:border-slate-800 shadow-sm">
-                <h3 className="text-lg sm:text-xl font-black mb-6 tracking-tight">Tarefas por Estado</h3>
+                <h3 className="text-base sm:text-lg font-black mb-6 tracking-tight">Tarefas por Estado</h3>
                 <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-3 sm:gap-4">
                   {Object.values(TaskStatus).map(s => (
                     <div key={s} className="bg-slate-50 dark:bg-slate-800/50 rounded-xl p-3 sm:p-4 text-center">
@@ -468,7 +545,7 @@ export default function App() {
               </div>
               {/* Actividades recentes do sistema: quem alterou o quê */}
               <div className="bg-white dark:bg-slate-900 rounded-2xl sm:rounded-[3rem] p-6 sm:p-8 lg:p-12 border border-slate-100 dark:border-slate-800 shadow-sm">
-                <h3 className="text-lg sm:text-2xl font-black mb-6 sm:mb-10 tracking-tight">{t.latestUpdates}</h3>
+                <h3 className="text-base sm:text-lg font-black mb-6 sm:mb-10 tracking-tight">{t.latestUpdates}</h3>
                 <div className="space-y-4 sm:space-y-6 max-h-[420px] overflow-y-auto pr-2">
                   {systemActivities.slice(0, 15).map(a => (
                     <div key={a.id} className="flex gap-3 sm:gap-6 items-start border-b border-slate-50 dark:border-slate-800 pb-4 last:border-0">
@@ -542,7 +619,7 @@ export default function App() {
           {activeTab === 'users' && user?.role === UserRole.ADMIN && (
             <div className="max-w-7xl mx-auto space-y-6 sm:space-y-10 animate-in">
               <div className="flex justify-between items-center">
-                <h3 className="text-xl font-black">Gestão de Utilizadores</h3>
+                <h3 className="text-lg font-black">Gestão de Utilizadores</h3>
                 <Button onClick={() => setIsAddUserOpen(true)} className="px-6 py-3"><Plus size={18}/> {t.addUser}</Button>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
@@ -568,7 +645,7 @@ export default function App() {
 
           {activeTab === 'profile' && (
             <div className="max-w-2xl mx-auto space-y-8 animate-in">
-              <h3 className="text-xl font-black">{t.myProfile}</h3>
+              <h3 className="text-lg font-black">{t.myProfile}</h3>
               <div className="bg-white dark:bg-slate-900 rounded-2xl p-6 sm:p-8 border border-slate-100 dark:border-slate-800 shadow-sm">
                 <form onSubmit={(e) => {
                   e.preventDefault();
@@ -607,7 +684,7 @@ export default function App() {
 
           {activeTab === 'reports' && user?.role === UserRole.ADMIN && (
             <div className="max-w-7xl mx-auto space-y-6 sm:space-y-10 animate-in">
-              <h3 className="text-xl font-black">Relatório de Cumprimento das Tarefas por Funcionário</h3>
+              <h3 className="text-lg font-black">Relatório de Cumprimento das Tarefas por Funcionário</h3>
               <div className="bg-white dark:bg-slate-900 rounded-2xl sm:rounded-3xl border border-slate-100 dark:border-slate-800 shadow-sm overflow-x-auto">
                 <table className="w-full min-w-[540px] text-left">
                   <thead>
@@ -650,10 +727,10 @@ export default function App() {
         const respIds = editTask ? [editTask.responsibleId, ...(editTask.intervenientes || [])] : [];
         return (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-[100] flex items-center justify-center p-4 sm:p-6 overflow-y-auto py-8 animate-in">
-           <div className="bg-white dark:bg-slate-900 w-full max-w-4xl max-h-[95vh] overflow-y-auto rounded-2xl sm:rounded-3xl p-6 sm:p-8 border border-slate-100 dark:border-slate-800 shadow-2xl relative my-auto">
-              <button onClick={() => { setIsTaskModalOpen(false); setEditingTaskId(null); setTaskFormDeliveryPreview(''); }} className="absolute top-4 right-4 sm:top-6 sm:right-6 p-2 text-slate-300 hover:text-rose-500 transition-colors z-10"><X size={20} className="sm:w-6 sm:h-6"/></button>
-              <h2 className="text-xl sm:text-2xl font-black tracking-tighter mb-6 uppercase text-slate-800 dark:text-white">{editTask ? 'Editar Tarefa' : 'Nova Actividade'}</h2>
-              <form id="taskForm" className="grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-4" onSubmit={(e) => {
+           <div className="bg-white dark:bg-slate-900 w-full max-w-3xl max-h-[90vh] overflow-y-auto rounded-2xl p-5 sm:p-6 border border-slate-100 dark:border-slate-800 shadow-2xl relative my-auto">
+              <button onClick={() => { setIsTaskModalOpen(false); setEditingTaskId(null); setTaskFormDeliveryPreview(''); }} className="absolute top-3 right-3 sm:top-4 sm:right-4 p-2 text-slate-300 hover:text-rose-500 transition-colors z-10"><X size={18} className="sm:w-5 sm:h-5"/></button>
+              <h2 className="text-lg sm:text-xl font-black tracking-tighter mb-4 uppercase text-slate-800 dark:text-white">{editTask ? 'Editar Tarefa' : 'Nova Actividade'}</h2>
+              <form id="taskForm" className="grid grid-cols-1 md:grid-cols-2 gap-2 sm:gap-3" onSubmit={async (e) => {
                 e.preventDefault();
                 const fd = new FormData(e.target as HTMLFormElement);
                 const ids = fd.getAll('responsibleIds') as string[];
@@ -667,56 +744,70 @@ export default function App() {
 
                 if (editTask) {
                   const updated = tasks.map(t => t.id === editTask.id ? { ...t, title: fd.get('title') as string, description: fd.get('description') as string, startDate: start, deadlineValue: val, deadlineType: type, deliveryDate: delivery.toISOString(), responsibleId: ids[0], intervenientes: ids.slice(1), updatedAt: new Date().toISOString() } : t);
+                  
+                  try {
+                    await apiTasks.update(editTask.id, updated.find(t => t.id === editTask.id)!);
+                  } catch (error) {
+                    logger.warn('Task', 'Erro ao atualizar na API, atualizando localmente...');
+                  }
+                  
                   saveTasks(updated);
                   addSystemActivity({ userId: user!.id, userName: user!.name, action: 'updated', entityType: 'task', entityId: editTask.id, entityTitle: fd.get('title') as string });
                   setEditingTaskId(null); setIsTaskModalOpen(false);
                 } else {
                   const newTask: Task = { id: 'T-' + Math.random().toString(36).substr(2, 6).toUpperCase(), title: fd.get('title') as string, description: fd.get('description') as string, startDate: start, deadlineValue: val, deadlineType: type, deliveryDate: delivery.toISOString(), responsibleId: ids[0], intervenientes: ids.slice(1), status: TaskStatus.ABERTO, comments: [], createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
+                  
+                  try {
+                    await apiTasks.create(newTask);
+                  } catch (error) {
+                    logger.warn('Task', 'Erro ao criar na API, criando localmente...');
+                  }
+                  
                   saveTasks([newTask, ...tasks]);
                   addSystemActivity({ userId: user!.id, userName: user!.name, action: 'created', entityType: 'task', entityId: newTask.id, entityTitle: newTask.title });
                   setIsTaskModalOpen(false);
                 }
                 setTaskFormDeliveryPreview('');
               }}>
-                <div className="md:col-span-2 space-y-1.5">
-                  <label className="text-[9px] font-black uppercase text-slate-400 tracking-widest ml-1">{t.title}</label>
-                  <input name="title" defaultValue={editTask?.title} className="w-full px-4 py-2 bg-slate-50 dark:bg-slate-800 border-none rounded-lg outline-none focus:ring-4 focus:ring-emerald-500/10 font-bold text-sm" required />
+                <div className="md:col-span-2 space-y-1">
+                  <label className="text-[8px] font-black uppercase text-slate-400 tracking-widest ml-1">{t.title}</label>
+                  <input name="title" defaultValue={editTask?.title} className="w-full px-3 py-1.5 bg-slate-50 dark:bg-slate-800 border-none rounded-lg outline-none focus:ring-2 focus:ring-emerald-500/30 font-bold text-xs" required />
                 </div>
-                <div className="md:col-span-2 space-y-1.5">
-                  <label className="text-[9px] font-black uppercase text-slate-400 tracking-widest ml-1">{t.description}</label>
-                  <textarea name="description" defaultValue={editTask?.description} rows={2} className="w-full px-4 py-2 bg-slate-50 dark:bg-slate-800 border-none rounded-lg outline-none focus:ring-4 focus:ring-emerald-500/10 font-medium resize-none text-sm" required />
+                <div className="md:col-span-2 space-y-1">
+                  <label className="text-[8px] font-black uppercase text-slate-400 tracking-widest ml-1">{t.description}</label>
+                  <textarea name="description" defaultValue={editTask?.description} rows={2} className="w-full px-3 py-1.5 bg-slate-50 dark:bg-slate-800 border-none rounded-lg outline-none focus:ring-2 focus:ring-emerald-500/30 font-medium resize-none text-xs" required />
                 </div>
-                <div className="space-y-1.5">
-                  <label className="text-[9px] font-black uppercase text-slate-400 tracking-widest ml-1">{t.startDate}</label>
-                  <input name="startDate" type="datetime-local" defaultValue={editTask?.startDate?.slice(0,16)} onInput={(e)=>recalcDelivery((e.target as HTMLInputElement).form!)} className="w-full px-4 py-2 bg-slate-50 dark:bg-slate-800 border-none rounded-lg outline-none focus:ring-4 focus:ring-emerald-500/10 font-bold text-sm" required />
+                <div className="space-y-1">
+                  <label className="text-[8px] font-black uppercase text-slate-400 tracking-widest ml-1">{t.startDate}</label>
+                  <input name="startDate" type="datetime-local" defaultValue={editTask?.startDate?.slice(0,16)} onInput={(e)=>recalcDelivery((e.target as HTMLInputElement).form!)} className="w-full px-3 py-1.5 bg-slate-50 dark:bg-slate-800 border-none rounded-lg outline-none focus:ring-2 focus:ring-emerald-500/30 font-bold text-xs" required />
                 </div>
-                <div className="space-y-1.5">
-                  <label className="text-[9px] font-black uppercase text-slate-400 tracking-widest ml-1">Duração (valor + unidade)</label>
-                  <div className="flex gap-2">
-                    <input name="deadlineValue" type="number" defaultValue={editTask?.deadlineValue ?? 1} min={1} onInput={(e)=>recalcDelivery((e.target as HTMLInputElement).form!)} className="flex-1 px-4 py-2 bg-slate-50 dark:bg-slate-800 border-none rounded-lg outline-none focus:ring-4 focus:ring-emerald-500/10 font-bold text-sm" required />
-                    <select name="deadlineType" defaultValue={editTask?.deadlineType} onChange={(e)=>recalcDelivery((e.target as HTMLSelectElement).form!)} className="px-4 py-2 bg-slate-50 dark:bg-slate-800 border-none rounded-lg outline-none focus:ring-4 focus:ring-emerald-500/10 font-bold text-sm">
+                <div className="space-y-1">
+                  <label className="text-[8px] font-black uppercase text-slate-400 tracking-widest ml-1">Duração</label>
+                  <div className="flex gap-1.5">
+                    <input name="deadlineValue" type="number" defaultValue={editTask?.deadlineValue ?? 1} min={1} onInput={(e)=>recalcDelivery((e.target as HTMLInputElement).form!)} className="flex-1 px-3 py-1.5 bg-slate-50 dark:bg-slate-800 border-none rounded-lg outline-none focus:ring-2 focus:ring-emerald-500/30 font-bold text-xs" required />
+                    <select name="deadlineType" defaultValue={editTask?.deadlineType} onChange={(e)=>recalcDelivery((e.target as HTMLSelectElement).form!)} className="px-3 py-1.5 bg-slate-50 dark:bg-slate-800 border-none rounded-lg outline-none focus:ring-2 focus:ring-emerald-500/30 font-bold text-xs">
                       <option value="days">{t.days}</option>
                       <option value="hours">{t.hours}</option>
                     </select>
                   </div>
                 </div>
-                <div className="md:col-span-2 space-y-1.5">
-                  <label className="text-[9px] font-black uppercase text-slate-400 tracking-widest ml-1">{t.deliveryDate} (calculada)</label>
-                  <div className="px-4 py-2 bg-emerald-50 dark:bg-emerald-900/20 rounded-lg font-bold text-[#10b981] text-sm">{taskFormDeliveryPreview || (editTask ? new Date(editTask.deliveryDate).toLocaleString('pt-PT', { dateStyle: 'short', timeStyle: 'short' }) : '—')}</div>
+                <div className="md:col-span-2 space-y-1">
+                  <label className="text-[8px] font-black uppercase text-slate-400 tracking-widest ml-1">{t.deliveryDate} (calculada)</label>
+                  <div className="px-3 py-1.5 bg-emerald-50 dark:bg-emerald-900/20 rounded-lg font-bold text-[#10b981] text-xs">{taskFormDeliveryPreview || (editTask ? new Date(editTask.deliveryDate).toLocaleString('pt-PT', { dateStyle: 'short', timeStyle: 'short' }) : '—')}</div>
                 </div>
-                <div className="md:col-span-2 space-y-1.5">
-                  <label className="text-[9px] font-black uppercase text-slate-400 tracking-widest ml-1">{t.responsibles} (múltipla escolha)</label>
-                  <div className="flex flex-wrap gap-2 p-3 bg-slate-50 dark:bg-slate-800 rounded-lg max-h-32 overflow-y-auto">
+                <div className="md:col-span-2 space-y-1">
+                  <label className="text-[8px] font-black uppercase text-slate-400 tracking-widest ml-1">{t.responsibles} (múltipla escolha)</label>
+                  <div className="flex flex-wrap gap-1.5 p-2 bg-slate-50 dark:bg-slate-800 rounded-lg max-h-24 overflow-y-auto">
                     {users.map(u => (
-                      <label key={u.id} className="flex items-center gap-2 px-3 py-1 rounded-md bg-white dark:bg-slate-700 cursor-pointer hover:bg-emerald-50 dark:hover:bg-emerald-900/20 text-sm">
+                      <label key={u.id} className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-white dark:bg-slate-700 cursor-pointer hover:bg-emerald-50 dark:hover:bg-emerald-900/20 text-xs">
                         <input type="checkbox" name="responsibleIds" value={u.id} defaultChecked={respIds.includes(u.id)} className="rounded" />
                         <span className="font-bold">{u.name}</span>
                       </label>
                     ))}
                   </div>
                 </div>
-                <div className="md:col-span-2 pt-2">
-                  <Button type="submit" className="w-full py-3 rounded-lg bg-[#10b981] shadow-emerald-500/20 shadow-xl text-sm uppercase tracking-[0.1em]">{editTask ? 'Guardar alterações' : 'Criar Tarefa'}</Button>
+                <div className="md:col-span-2 pt-1">
+                  <Button type="submit" className="w-full py-2 rounded-lg bg-[#10b981] shadow-emerald-500/20 shadow-lg text-xs uppercase tracking-[0.1em]">{editTask ? 'Guardar' : 'Criar'}</Button>
                 </div>
               </form>
            </div>
@@ -729,10 +820,17 @@ export default function App() {
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-[100] flex items-center justify-center p-4">
           <div className="bg-white dark:bg-slate-900 w-full max-w-md rounded-2xl p-8 border border-slate-100 dark:border-slate-800 shadow-2xl">
             <h2 className="text-2xl font-black mb-6">Novo Utilizador</h2>
-            <form onSubmit={(e) => {
+            <form onSubmit={async (e) => {
               e.preventDefault();
               const fd = new FormData(e.target as HTMLFormElement);
               const newUser: User = { id: 'u-' + Math.random().toString(36).substr(2, 9), name: fd.get('name') as string, email: fd.get('email') as string, role: (fd.get('role') as UserRole) || UserRole.EMPLOYEE, position: (fd.get('position') as string) || '' };
+              
+              try {
+                await apiUsers.create(newUser);
+              } catch (error) {
+                logger.warn('User', 'Erro ao criar utilizador na API, criando localmente...');
+              }
+              
               saveUsers([...users, newUser]);
               setIsAddUserOpen(false);
             }}>
@@ -756,10 +854,18 @@ export default function App() {
           <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-[100] flex items-center justify-center p-4">
             <div className="bg-white dark:bg-slate-900 w-full max-w-md rounded-2xl p-8 border border-slate-100 dark:border-slate-800 shadow-2xl">
               <h2 className="text-2xl font-black mb-6">{t.editUser}</h2>
-              <form onSubmit={(e) => {
+              <form onSubmit={async (e) => {
                 e.preventDefault();
                 const fd = new FormData(e.target as HTMLFormElement);
-                saveUsers(users.map(x => x.id !== editingUserId ? x : { ...x, name: fd.get('name') as string, email: fd.get('email') as string, position: fd.get('position') as string, role: (fd.get('role') as UserRole) || x.role }));
+                const updated = users.map(x => x.id !== editingUserId ? x : { ...x, name: fd.get('name') as string, email: fd.get('email') as string, position: fd.get('position') as string, role: (fd.get('role') as UserRole) || x.role });
+                
+                try {
+                  await apiUsers.update(editingUserId, updated.find(x => x.id === editingUserId)!);
+                } catch (error) {
+                  logger.warn('User', 'Erro ao atualizar utilizador na API, atualizando localmente...');
+                }
+                
+                saveUsers(updated);
                 setEditingUserId(null);
               }}>
                 <div className="space-y-4">
@@ -813,6 +919,9 @@ function TaskCard({ task, user, users, onAdvance, onDelete, onEdit, onAddComment
   const respName = users?.find((u: User) => u.id === task.responsibleId)?.name;
   const extra = task.intervenientes?.length ? ` +${task.intervenientes.length}` : '';
   const [commentText, setCommentText] = useState('');
+  const [showAllComments, setShowAllComments] = useState(false);
+  const isAdmin = user.role === UserRole.ADMIN;
+  const isTaskMember = task.responsibleId === user.id || task.intervenientes?.includes(user.id);
 
   return (
     <div className="bg-white dark:bg-slate-900 rounded-2xl sm:rounded-[3.5rem] p-6 sm:p-10 border border-slate-100 dark:border-slate-800 shadow-sm hover:shadow-2xl transition-all group flex flex-col h-full relative overflow-hidden">
@@ -835,26 +944,54 @@ function TaskCard({ task, user, users, onAdvance, onDelete, onEdit, onAddComment
           <p className="text-xs sm:text-sm text-slate-400 font-medium leading-relaxed line-clamp-3">{task.description}</p>
           {respName && <p className="text-[10px] font-bold text-slate-500 uppercase">Responsável: {respName}{extra}</p>}
 
-          {!user.role || user.role !== UserRole.ADMIN ? (
-            <div className="pt-3">
-              <div className="flex items-center justify-between">
-                <p className="text-xs font-bold text-slate-500">Comentários ({task.comments?.length || 0})</p>
+          {/* Seção de comentários */}
+          {(isTaskMember || isAdmin) && (
+            <div className="pt-3 border-t border-slate-100 dark:border-slate-800">
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-xs font-bold text-slate-500">💬 Comentários ({task.comments?.length || 0})</p>
+                {isAdmin && task.comments?.length > 0 && (
+                  <button 
+                    onClick={() => setShowAllComments(!showAllComments)}
+                    className="text-[9px] font-bold text-[#10b981] hover:text-[#059669] transition-colors"
+                  >
+                    {showAllComments ? 'Ocultar tudo' : 'Ver tudo'}
+                  </button>
+                )}
               </div>
-              <div className="mt-2 space-y-2">
-                {(task.comments || []).slice(-3).map((c: any) => (
-                  <div key={c.id} className="text-sm text-slate-600 bg-slate-50 dark:bg-slate-800 p-2 rounded-md">
-                    <span className="font-bold text-slate-800 dark:text-white mr-2">{c.userName}:</span>
-                    <span className="text-slate-600 dark:text-slate-300">{c.text}</span>
-                    <div className="text-[10px] text-slate-400 mt-1">{new Date(c.timestamp).toLocaleString()}</div>
-                  </div>
-                ))}
-              </div>
-              <div className="flex gap-2 mt-3">
-                <input value={commentText} onChange={e => setCommentText(e.target.value)} placeholder="Adicionar comentário..." className="flex-1 px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 outline-none" />
-                <button onClick={() => { if (commentText.trim()) { onAddComment && onAddComment(commentText.trim()); setCommentText(''); } }} className="px-4 py-2 rounded-xl bg-[#10b981] text-white font-bold">Comentar</button>
-              </div>
+              
+              {/* Mostrar comentários */}
+              {(showAllComments || !isAdmin) && (
+                <div className="space-y-2 mb-3 max-h-32 overflow-y-auto">
+                  {(task.comments || []).map((c: any) => (
+                    <div key={c.id} className="text-sm text-slate-600 bg-slate-50 dark:bg-slate-800 p-2 rounded-md">
+                      <span className="font-bold text-slate-800 dark:text-white mr-2">{c.userName}:</span>
+                      <span className="text-slate-600 dark:text-slate-300">{c.text}</span>
+                      <div className="text-[9px] text-slate-400 mt-1">{new Date(c.timestamp).toLocaleString('pt-PT')}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Campo para adicionar comentário - apenas para membros da tarefa */}
+              {isTaskMember && (
+                <div className="flex gap-2">
+                  <input 
+                    value={commentText} 
+                    onChange={e => setCommentText(e.target.value)}
+                    onKeyPress={(e) => { if (e.key === 'Enter' && commentText.trim()) { onAddComment && onAddComment(commentText.trim()); setCommentText(''); } }}
+                    placeholder="Adicionar comentário..." 
+                    className="flex-1 px-3 py-1.5 rounded-lg bg-slate-50 dark:bg-slate-800 outline-none text-xs" 
+                  />
+                  <button 
+                    onClick={() => { if (commentText.trim()) { onAddComment && onAddComment(commentText.trim()); setCommentText(''); } }} 
+                    className="px-3 py-1.5 rounded-lg bg-[#10b981] text-white font-bold text-xs hover:bg-[#059669] transition-colors"
+                  >
+                    +
+                  </button>
+                </div>
+              )}
             </div>
-          ) : null}
+          )}
        </div>
 
        <div className="mt-6 sm:mt-10 pt-6 sm:pt-8 border-t border-slate-50 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4">
