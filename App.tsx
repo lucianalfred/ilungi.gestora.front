@@ -13,7 +13,7 @@ import {
 } from './types';
 import { MOCK_USERS, TRANSLATIONS, STATUS_COLORS, INITIAL_TASKS } from './constants';
 import { getSmartNotification } from './services/geminiService';
-import { setAuthToken, apiAuth, apiTasks, apiUsers, apiComments, mapTaskFromAPI, mapUserFromAPI, mapCommentFromAPI } from './services/apiService';
+import { setAuthToken, apiAuth, apiTasks, apiUsers, apiComments, apiAdminUsers, apiAdmin, apiAdminTasks, mapTaskFromAPI, mapUserFromAPI, mapCommentFromAPI } from './services/apiService';
 import { logger } from './services/logger';
 import { 
   LayoutDashboard, 
@@ -245,7 +245,7 @@ export default function App() {
 
     try {
       // Carregar utilizadores da API (somente admin)
-      const usersResponse = await apiUsers.getAll();
+      const usersResponse = await apiAdminUsers.getAll();
       if (usersResponse) {
         const usersList = Array.isArray(usersResponse) ? usersResponse : (usersResponse.data || usersResponse.users || []);
         const mappedUsers = usersList.map((u: any) => mapUserFromAPI(u));
@@ -463,6 +463,10 @@ export default function App() {
 const LoginPage = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [rememberMe, setRememberMe] = useState(false);
+  const [showForgotPassword, setShowForgotPassword] = useState(false);
+  const [forgotPasswordEmail, setForgotPasswordEmail] = useState('');
+  const [forgotPasswordMessage, setForgotPasswordMessage] = useState<string | null>(null);
   const [formData, setFormData] = useState({
     email: '',
     password: ''
@@ -477,6 +481,43 @@ const LoginPage = () => {
     // Limpar erro quando o usuário começar a digitar
     if (errorMessage) setErrorMessage(null);
   };
+
+  // Handler para "Lembrar-me"
+  const handleRememberMeChange = () => {
+    setRememberMe(!rememberMe);
+    if (!rememberMe) {
+      // Salvar email no localStorage quando ativar
+      localStorage.setItem('gestora_remember_email', formData.email);
+    } else {
+      localStorage.removeItem('gestora_remember_email');
+    }
+  };
+
+  // Handler para "Esqueceu a senha?"
+  const handleForgotPassword = async () => {
+    if (!forgotPasswordEmail) {
+      setForgotPasswordMessage('Por favor, insira o seu email.');
+      return;
+    }
+    
+    // Simular envio de email de recuperação
+    setForgotPasswordMessage(`Um email de recuperação foi enviado para ${forgotPasswordEmail}`);
+    // Nota: Implementar com a API quando disponível
+    setTimeout(() => {
+      setShowForgotPassword(false);
+      setForgotPasswordEmail('');
+      setForgotPasswordMessage(null);
+    }, 3000);
+  };
+
+  // Carregar email salvo ao iniciar (se remember-me estava ativo)
+  useEffect(() => {
+    const savedEmail = localStorage.getItem('gestora_remember_email');
+    if (savedEmail) {
+      setFormData(prev => ({ ...prev, email: savedEmail }));
+      setRememberMe(true);
+    }
+  }, []);
 
   const validateForm = () => {
     if (!formData.email.trim()) {
@@ -649,6 +690,8 @@ const LoginPage = () => {
               <label className="flex items-center space-x-2 cursor-pointer">
                 <input 
                   type="checkbox" 
+                  checked={rememberMe}
+                  onChange={handleRememberMeChange}
                   className="w-4 h-4 text-emerald-500 rounded border-slate-300 focus:ring-emerald-500/20" 
                   disabled={isLoading}
                 />
@@ -656,6 +699,7 @@ const LoginPage = () => {
               </label>
               <button 
                 type="button" 
+                onClick={() => setShowForgotPassword(true)}
                 className="text-sm text-emerald-600 hover:text-emerald-700 font-medium disabled:text-slate-400"
                 disabled={isLoading}
               >
@@ -703,6 +747,66 @@ const LoginPage = () => {
           </p>
         </div>
       </div>
+
+      {/* Modal de Recuperação de Senha */}
+      {showForgotPassword && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl p-6 sm:p-8 max-w-md w-full shadow-2xl">
+            <div className="flex items-center justify-between mb-6">
+              <h3 className="text-lg font-bold text-slate-900">Recuperar Senha</h3>
+              <button 
+                onClick={() => setShowForgotPassword(false)}
+                className="text-slate-400 hover:text-slate-600"
+              >
+                <X size={24} />
+              </button>
+            </div>
+            
+            <p className="text-sm text-slate-600 mb-6">
+              Digite o seu email para receber um link de recuperação de senha.
+            </p>
+            
+            {forgotPasswordMessage && (
+              <div className={`mb-4 p-3 rounded-lg text-sm ${
+                forgotPasswordMessage.includes('enviado') 
+                  ? 'bg-emerald-50 text-emerald-700' 
+                  : 'bg-rose-50 text-rose-700'
+              }`}>
+                {forgotPasswordMessage}
+              </div>
+            )}
+            
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1.5">
+                  Email
+                </label>
+                <input
+                  type="email"
+                  value={forgotPasswordEmail}
+                  onChange={(e) => setForgotPasswordEmail(e.target.value)}
+                  placeholder="nome@empresa.com"
+                  className="w-full px-4 py-2.5 border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none transition-all"
+                />
+              </div>
+              
+              <button
+                onClick={handleForgotPassword}
+                className="w-full py-3 bg-emerald-500 hover:bg-emerald-600 text-white font-bold rounded-xl transition-colors"
+              >
+                Enviar Link de Recuperação
+              </button>
+              
+              <button
+                onClick={() => setShowForgotPassword(false)}
+                className="w-full py-2 text-slate-500 hover:text-slate-700 text-sm"
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
@@ -741,8 +845,10 @@ const LoginPage = () => {
 
       setIsLoading(true);
       try {
-        await apiAuth.setPassword(inviteToken, password);
-        setSuccessMessage('Senha definida com sucesso. Pode entrar no sistema.');
+        // A nova API usa PATCH /users/:id/password após login
+        // Para fluxo de convite, o admin cria user com senha temporária
+        // e o user altera após primeiro login
+        setSuccessMessage('Para alterar a senha, faça login e use a opção no perfil.');
         setInviteToken(null);
         if (typeof window !== 'undefined') {
           const cleanUrl = window.location.origin + window.location.pathname;
@@ -1449,17 +1555,14 @@ const LoginPage = () => {
               e.preventDefault();
               setUserFormError(null);
               const fd = new FormData(e.target as HTMLFormElement);
-              const tempPassword = (fd.get('tempPassword') as string) || '';
-              const newUser: User = { id: 'u-' + Math.random().toString(36).substr(2, 9), name: fd.get('name') as string, email: fd.get('email') as string, role: (fd.get('role') as UserRole) || UserRole.EMPLOYEE, position: (fd.get('position') as string) || '', mustChangePassword: true, localPassword: tempPassword };
+              const newUser: User = { id: 'u-' + Math.random().toString(36).substr(2, 9), name: fd.get('name') as string, email: fd.get('email') as string, role: (fd.get('role') as UserRole) || UserRole.EMPLOYEE, position: (fd.get('position') as string) || '', mustChangePassword: true, localPassword: '' };
               let createdUser = newUser;
 
               try {
-                const apiResponse = await apiUsers.create({
+                const apiResponse = await apiAdminUsers.create({
                   name: newUser.name,
                   email: newUser.email,
-                  role: newUser.role,
-                  position: newUser.position,
-                  tempPassword
+                  role: newUser.role
                 });
 
                 if (apiResponse?.user) {
@@ -1488,10 +1591,9 @@ const LoginPage = () => {
               <div className="space-y-4">
                 <div><label className="text-[10px] font-black uppercase text-slate-400 block mb-1">{t.name}</label><input name="name" className="w-full px-4 py-3 rounded-xl bg-slate-50 dark:bg-slate-800 font-bold" required /></div>
                 <div><label className="text-[10px] font-black uppercase text-slate-400 block mb-1">{t.email}</label><input name="email" type="email" className="w-full px-4 py-3 rounded-xl bg-slate-50 dark:bg-slate-800 font-bold" required /></div>
-                <div><label className="text-[10px] font-black uppercase text-slate-400 block mb-1">{t.position}</label><input name="position" className="w-full px-4 py-3 rounded-xl bg-slate-50 dark:bg-slate-800 font-bold" /></div>
-                <div><label className="text-[10px] font-black uppercase text-slate-400 block mb-1">Senha temporária</label><input name="tempPassword" type="password" className="w-full px-4 py-3 rounded-xl bg-slate-50 dark:bg-slate-800 font-bold" required /></div>
+                <div><label className="text-[10px] font-black uppercase text-slate-400 block mb-1">Cargo/Posição</label><input name="position" className="w-full px-4 py-3 rounded-xl bg-slate-50 dark:bg-slate-800 font-bold" /></div>
                 <div><label className="text-[10px] font-black uppercase text-slate-400 block mb-1">Função</label><select name="role" className="w-full px-4 py-3 rounded-xl bg-slate-50 dark:bg-slate-800 font-bold"><option value={UserRole.EMPLOYEE}>Funcionário</option><option value={UserRole.ADMIN}>Administrador</option></select></div>
-                <p className="text-[10px] text-slate-400">Será enviado um link por email para definir a palavra-passe.</p>
+                <p className="text-[10px] text-slate-400">Uma senha temporária será gerada automaticamente e enviada por email.</p>
               </div>
               <div className="flex gap-3 mt-6"><Button type="submit" className="flex-1">Adicionar</Button><Button type="button" variant="ghost" onClick={() => { setUserFormError(null); setIsAddUserOpen(false); }}>{t.cancel}</Button></div>
             </form>

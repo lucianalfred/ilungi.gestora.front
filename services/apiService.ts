@@ -1,9 +1,8 @@
 // apiService.ts
 
 /**
- * API Service para comunicação com o backend
- * Base URL via Vite env:
- *   VITE_API_BASE_URL="https://seu-backend.com"
+ * API Service para comunicação com o backend ILUNGI GESTORA API
+ * Base URL: https://ilungi-gestora-api-oox9.onrender.com
  */
 
 type Json = Record<string, any>;
@@ -18,7 +17,7 @@ function getApiBase(): string {
   const winBase =
     (typeof window !== "undefined" && (window as any).VITE_API_BASE_URL) || "";
 
-  const base = viteBase || winBase || "https://b44f-2c0f-f888-a180-946c-8939-147d-5111-65ca.ngrok-free.app";
+  const base = viteBase || winBase || "https://ilungi-gestora-api-oox9.onrender.com";
   return String(base).replace(/\/$/, "");
 }
 
@@ -46,19 +45,29 @@ const getHeaders = (): HeadersInit => {
 };
 
 // =================== RESPONSE HANDLER ===================
+function generateTempPassword(): string {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789@#$!';
+  let password = '';
+  const randomValues = new Uint32Array(12);
+  window.crypto.getRandomValues(randomValues);
+  for (let i = 0; i < 12; i++) {
+    password += chars[randomValues[i] % chars.length];
+  }
+  return password;
+}
+
 async function handleResponse(res: Response) {
   const contentType = res.headers.get("content-type") || "";
   const raw = await res.text();
 
   let data: any = raw;
-  if (raw && contentType.includes("application/json")) {
+  if (raw && (contentType.includes("application/json") || raw.startsWith("{"))) {
     try {
       data = JSON.parse(raw);
     } catch {
-      data = raw; // JSON inválido
+      data = raw;
     }
   } else {
-    // tenta parse mesmo se vier JSON com content-type errado
     try {
       data = raw ? JSON.parse(raw) : null;
     } catch {
@@ -67,7 +76,6 @@ async function handleResponse(res: Response) {
   }
 
   if (!res.ok) {
-    // tenta extrair mensagem padrão
     const msg =
       (data && (data.message || data.error || data.detail)) ||
       (typeof data === "string" ? data : "") ||
@@ -108,11 +116,16 @@ export const apiAuth = {
     return { success: true };
   },
 
-  register: async (email: string, name: string, password?: string) => {
+  register: async (email: string, name: string, password?: string, phone?: string) => {
     const response = await fetch(`${API_BASE}/auth/register`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, name, password: password || "" }),
+      body: JSON.stringify({ 
+        email, 
+        name, 
+        password: password || "",
+        phone: phone || ""
+      }),
     });
 
     const data = await handleResponse(response);
@@ -123,27 +136,14 @@ export const apiAuth = {
     return data;
   },
 
-  setPassword: async (token: string, password: string) => {
-    const response = await fetch(`${API_BASE}/auth/set-password`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ token, password }),
-    });
-    return handleResponse(response);
-  },
-
   getCurrentUser: async () => {
-    const tryFetch = async (path: string) => {
-      const res = await fetch(`${API_BASE}${path}`, { method: "GET", headers: getHeaders() });
-      if (res.status === 404) return null;
-      return handleResponse(res);
-    };
-
-    return (await tryFetch("/auth/eu")) || (await tryFetch("/auth/me"));
+    const res = await fetch(`${API_BASE}/auth/me`, { method: "GET", headers: getHeaders() });
+    if (res.status === 404 || res.status === 401) return null;
+    return handleResponse(res);
   },
 };
 
-// =================== TASKS ===================
+// =================== TASKS (USER) ===================
 export const apiTasks = {
   getAll: async () => {
     const res = await fetch(`${API_BASE}/tasks`, { method: "GET", headers: getHeaders() });
@@ -186,10 +186,43 @@ export const apiTasks = {
     });
     return handleResponse(res);
   },
+
+  // Minhas tarefas
+  getMyTasks: async () => {
+    const res = await fetch(`${API_BASE}/tasks/my-tasks`, { method: "GET", headers: getHeaders() });
+    return handleResponse(res);
+  },
+
+  // Minhas estatísticas
+  getMyStats: async () => {
+    const res = await fetch(`${API_BASE}/tasks/my-stats`, { method: "GET", headers: getHeaders() });
+    return handleResponse(res);
+  },
 };
 
-// =================== USERS ===================
-export const apiUsers = {
+// =================== ADMIN TASKS ===================
+export const apiAdminTasks = {
+  getAll: async () => {
+    const res = await fetch(`${API_BASE}/admin/tasks`, { method: "GET", headers: getHeaders() });
+    return handleResponse(res);
+  },
+
+  getByUserId: async (userId: string) => {
+    const res = await fetch(`${API_BASE}/admin/tasks/user/${userId}`, { method: "GET", headers: getHeaders() });
+    return handleResponse(res);
+  },
+
+  assignUser: async (taskId: string, userId: string) => {
+    const res = await fetch(`${API_BASE}/admin/tasks/${taskId}/assign/${userId}`, { 
+      method: "PATCH", 
+      headers: getHeaders() 
+    });
+    return handleResponse(res);
+  },
+};
+
+// =================== ADMIN USERS ===================
+export const apiAdminUsers = {
   getAll: async () => {
     const res = await fetch(`${API_BASE}/admin/users`, { method: "GET", headers: getHeaders() });
     return handleResponse(res);
@@ -200,22 +233,34 @@ export const apiUsers = {
     return handleResponse(res);
   },
 
-  create: async (userData: any) => {
-    const res = await fetch(`${API_BASE}/admin/users`, {
-      method: "POST",
-      headers: getHeaders(),
-      body: JSON.stringify(userData),
-    });
+  getByRole: async (role: string) => {
+    const res = await fetch(`${API_BASE}/admin/users/by-role/${role}`, { method: "GET", headers: getHeaders() });
     return handleResponse(res);
   },
 
-  update: async (id: string, userData: any) => {
-    const res = await fetch(`${API_BASE}/admin/users/${id}`, {
+  create: async (data: { name: string; email: string; phone?: string; role?: string; tempPassword?: string }) => {
+    // O backend gera a senha automaticamente, não precisamos enviar
+    // Mas podemos enviar phone e role
+    const response = await fetch(`${API_BASE}/admin/users`, {
+      method: "POST",
+      headers: getHeaders(),
+      body: JSON.stringify({
+        name: data.name,
+        email: data.email,
+        phone: data.phone || "",
+        role: data.role || "USER"
+      }),
+    });
+    return handleResponse(response);
+  },
+
+  update: async (id: string, data: { name?: string; phone?: string; role?: string }) => {
+    const response = await fetch(`${API_BASE}/admin/users/${id}`, {
       method: "PUT",
       headers: getHeaders(),
-      body: JSON.stringify(userData),
+      body: JSON.stringify(data),
     });
-    return handleResponse(res);
+    return handleResponse(response);
   },
 
   delete: async (id: string) => {
@@ -223,21 +268,74 @@ export const apiUsers = {
     return handleResponse(res);
   },
 
-  updateAvatar: async (id: string, avatarData: string) => {
-    const res = await fetch(`${API_BASE}/users/${id}/profile`, {
-      method: "PATCH",
+  changeRole: async (id: string, role: string) => {
+    const res = await fetch(`${API_BASE}/admin/users/${id}/role`, { 
+      method: "PATCH", 
       headers: getHeaders(),
-      body: JSON.stringify({ avatar: avatarData }),
+      body: JSON.stringify({ role }),
+    });
+    return handleResponse(res);
+  },
+};
+
+// =================== ADMIN STATS & DASHBOARD ===================
+export const apiAdmin = {
+  getStats: async () => {
+    const res = await fetch(`${API_BASE}/admin/stats`, { method: "GET", headers: getHeaders() });
+    return handleResponse(res);
+  },
+
+  getDashboard: async () => {
+    const res = await fetch(`${API_BASE}/admin/dashboard`, { method: "GET", headers: getHeaders() });
+    return handleResponse(res);
+  },
+};
+
+// =================== USER SELF-SERVICE ===================
+export const apiUsers = {
+  update: async (id: string, data: { name?: string; phone?: string; email?: string }) => {
+    const res = await fetch(`${API_BASE}/users/${id}`, {
+      method: "PUT",
+      headers: getHeaders(),
+      body: JSON.stringify(data),
     });
     return handleResponse(res);
   },
 
-  changePassword: async (id: string, password: string) => {
-    const res = await fetch(`${API_BASE}/users/${id}/senha`, {
+  delete: async (id: string) => {
+    const res = await fetch(`${API_BASE}/users/${id}`, { method: "DELETE", headers: getHeaders() });
+    return handleResponse(res);
+  },
+
+  changeRole: async (id: string, role: string) => {
+    const res = await fetch(`${API_BASE}/users/${id}/role`, { 
+      method: "PATCH", 
+      headers: getHeaders(),
+      body: JSON.stringify({ role }),
+    });
+    return handleResponse(res);
+  },
+
+  updateProfile: async (id: string, data: { name?: string; phone?: string }) => {
+    const res = await fetch(`${API_BASE}/users/${id}/profile`, {
       method: "PATCH",
       headers: getHeaders(),
-      body: JSON.stringify({ password }),
+      body: JSON.stringify(data),
     });
+    return handleResponse(res);
+  },
+
+  changePassword: async (id: string, password: string, oldPassword?: string) => {
+    const res = await fetch(`${API_BASE}/users/${id}/password`, {
+      method: "PATCH",
+      headers: getHeaders(),
+      body: JSON.stringify({ password, oldPassword }),
+    });
+    return handleResponse(res);
+  },
+
+  getByRole: async (role: string) => {
+    const res = await fetch(`${API_BASE}/users/by-role/${role}`, { method: "GET", headers: getHeaders() });
     return handleResponse(res);
   },
 };
@@ -267,85 +365,16 @@ export const apiComments = {
   },
 };
 
-// =================== ACTIVITIES ===================
-export const apiActivities = {
-  getAll: async () => {
-    const res = await fetch(`${API_BASE}/activities`, { method: "GET", headers: getHeaders() });
-    return handleResponse(res);
-  },
-
-  getByTaskId: async (taskId: string) => {
-    const res = await fetch(`${API_BASE}/activities/task/${taskId}`, { method: "GET", headers: getHeaders() });
-    return handleResponse(res);
-  },
-};
-
-// =================== NOTIFICATIONS ===================
-export const apiNotifications = {
-  getAll: async () => {
-    const res = await fetch(`${API_BASE}/notifications`, { method: "GET", headers: getHeaders() });
-    return handleResponse(res);
-  },
-
-  markAsRead: async (notificationId: string) => {
-    const res = await fetch(`${API_BASE}/notifications/${notificationId}/read`, {
-      method: "PATCH",
-      headers: getHeaders(),
-    });
-    return handleResponse(res);
-  },
-};
-
-// =================== REPORTS ===================
-export const apiReports = {
-  getStats: async () => {
-    const res = await fetch(`${API_BASE}/reports/stats`, { method: "GET", headers: getHeaders() });
-    return handleResponse(res);
-  },
-
-  getUserPerformance: async () => {
-    const res = await fetch(`${API_BASE}/reports/user-performance`, { method: "GET", headers: getHeaders() });
-    return handleResponse(res);
-  },
-
-  getTaskStats: async () => {
-    const res = await fetch(`${API_BASE}/reports/task-stats`, { method: "GET", headers: getHeaders() });
-    return handleResponse(res);
-  },
-};
-
-// =================== HEALTH ===================
-export const apiHealth = {
-  ping: async () => {
-    const res = await fetch(`${API_BASE}/actuator/health`, { method: "GET", headers: getHeaders() });
-
-    // pode vir JSON, texto, etc
-    if (!res.ok) throw new Error(`Health failed ${res.status}`);
-    const txt = await res.text();
-    try {
-      return txt ? JSON.parse(txt) : { status: "UP" };
-    } catch {
-      return { status: "UP", raw: txt };
-    }
-  },
-
-  pingSimple: async () => {
-    const res = await fetch(`${API_BASE}/ping`, { method: "GET", headers: getHeaders() });
-    if (!res.ok) throw new Error(`Ping failed ${res.status}`);
-    return res.text();
-  },
-};
-
 // =================== MAPPERS ===================
 export const mapUserFromAPI = (apiUser: any) => {
   return {
     id: String(apiUser.id),
     email: apiUser.email || "",
     name: apiUser.name || apiUser.username || "Utilizador",
-    role: apiUser.role || "EMPLOYEE",
+    phone: apiUser.phone || null,
+    role: apiUser.role || "USER",
     avatar: apiUser.avatar || null,
-    mustChangePassword: apiUser.mustChangePassword ?? apiUser.must_change_password ?? false,
-    lastLogin: apiUser.lastLogin || null,
+    mustChangePassword: apiUser.mustChangePassword ?? false,
     createdAt: apiUser.createdAt || new Date().toISOString(),
     updatedAt: apiUser.updatedAt || new Date().toISOString(),
   };
@@ -356,18 +385,16 @@ export const mapTaskFromAPI = (apiTask: any) => {
     id: String(apiTask.id),
     title: apiTask.title || "",
     description: apiTask.description || "",
-    status: apiTask.status || "PENDENTE",
-    priority: apiTask.priority || "MEDIA",
+    status: apiTask.status || "PENDING",
+    priority: apiTask.priority || "MEDIUM",
     responsibleId: String(apiTask.responsibleId || apiTask.userId || ""),
     responsibleName: apiTask.responsibleName || apiTask.userName || "",
-    deliveryDate: apiTask.deliveryDate || new Date().toISOString(),
+    deliveryDate: apiTask.deliveryDate || apiTask.dueDate || new Date().toISOString(),
     startDate: apiTask.startDate || new Date().toISOString(),
-    intervenientes: Array.isArray(apiTask.intervenientes) ? apiTask.intervenientes.map(String) : [],
+    intervenientes: Array.isArray(apiTask.intervenientes) ? apiTask.intervenientes : [],
     comments: Array.isArray(apiTask.comments) ? apiTask.comments : [],
-    attachments: Array.isArray(apiTask.attachments) ? apiTask.attachments : [],
     createdAt: apiTask.createdAt || new Date().toISOString(),
     updatedAt: apiTask.updatedAt || new Date().toISOString(),
-    closedAt: apiTask.closedAt || null,
   };
 };
 
@@ -376,7 +403,18 @@ export const mapCommentFromAPI = (apiComment: any) => {
     id: String(apiComment.id),
     userId: String(apiComment.userId || ""),
     userName: apiComment.userName || "Utilizador",
-    text: apiComment.text || "",
+    text: apiComment.text || apiComment.content || "",
     timestamp: apiComment.timestamp || apiComment.createdAt || new Date().toISOString(),
   };
+};
+
+// =================== DEFAULT EXPORT ===================
+export default {
+  apiAuth,
+  apiTasks,
+  apiUsers,
+  apiComments,
+  apiAdminUsers,
+  apiAdminTasks,
+  apiAdmin,
 };

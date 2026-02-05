@@ -64,7 +64,7 @@ jwt:
 
 app:
   frontend:
-    base-url: ${APP_FRONTEND_BASE_URL:http://localhost:5173}
+    base-url: ${APP_FRONTEND_BASE_URL:http://localhost:3000}
   invite:
     expiry-hours: ${APP_INVITE_EXPIRY_HOURS:24}
 
@@ -78,3 +78,22 @@ logging:
   pattern:
     console: "%d{yyyy-MM-dd HH:mm:ss} - %msg%n"
     file: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
+
+spring:
+  mail:
+    username: devfront0ilungui@gmail.com
+    password: digu zojp rfqs emmn
+    host: smtp.gmail.com
+    port: 587
+    properties:
+      mail:
+        smtp:
+          auth: true
+          starttls:
+            enable: true
+
+app:
+  admin:
+    email: EMAIL_DO_ADMIN@gmail.com
+  frontend:
+    base-url: http://localhost:5173
