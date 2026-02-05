@@ -134,9 +134,15 @@ export default function App() {
   };
 
   useEffect(() => {
-    const savedTasks = JSON.parse(localStorage.getItem('gestora_tasks') || JSON.stringify(INITIAL_TASKS));
-    const savedUsers = JSON.parse(localStorage.getItem('gestora_users') || JSON.stringify(MOCK_USERS));
-    const savedActivitiesRaw = JSON.parse(localStorage.getItem('gestora_activities') || '[]');
+    // Inicializar com arrays vazios - dados vêm da API
+    const savedTasks: Task[] = [];
+    const savedUsers: User[] = [];
+    const savedActivitiesRaw: SystemActivity[] = [];
+    
+    // Limpar localStorage de dados antigos
+    localStorage.removeItem('gestora_tasks');
+    localStorage.removeItem('gestora_users');
+    
     const dedupeActivities = (list: SystemActivity[]) => {
       const seen = new Set<string>();
       return list.filter(a => {
@@ -147,10 +153,9 @@ export default function App() {
       });
     };
     const savedActivities = dedupeActivities(savedActivitiesRaw);
-    const localOnlyTasks = savedTasks.filter((t: any) => typeof t.id === 'string' && t.id.toUpperCase().startsWith('T-'));
-    setTasks(localOnlyTasks);
-    setUsers(savedUsers);
-    setSystemActivities(savedActivities);
+    setTasks([]);
+    setUsers([]);
+    setSystemActivities([]);
     localStorage.setItem('gestora_activities', JSON.stringify(savedActivities));
     
     // Restaurar token de autenticação
@@ -188,12 +193,14 @@ export default function App() {
           };
           const mapped = mapUserFromAPI(normalizedUser);
           setUser(mapped);
+          // Sempre carregar dados da API após login
+          await loadDataFromAPI(mapped);
+          
           if (mapped.mustChangePassword) {
             setView('app');
             setActiveTab('profile');
           } else {
             setView('app');
-          await loadDataFromAPI(mapped);
           }
         } catch (error) {
           setAuthToken(null);
@@ -209,13 +216,6 @@ export default function App() {
     setView('login');
   }, []);
 
-  const mergeTasks = (apiTasksList: Task[]) => {
-    const localOnly = tasks.filter(t => isLocalTaskId(t.id));
-    const byId = new Map<string, Task>();
-    apiTasksList.forEach(t => byId.set(String(t.id), t));
-    localOnly.forEach(t => { if (!byId.has(t.id)) byId.set(t.id, t); });
-    return Array.from(byId.values());
-  };
 
   const filterTasksForUser = (list: Task[], u?: User | null) => {
     if (!u || u.role !== UserRole.EMPLOYEE) return list;
@@ -224,38 +224,46 @@ export default function App() {
 
   const loadDataFromAPI = async (currentUser?: User | null) => {
     try {
-      // Carregar tarefas da API
+      // Carregar tarefas da API para todos os utilizadores
       const tasksResponse = await apiTasks.getAll();
       if (tasksResponse) {
         const tasksList = Array.isArray(tasksResponse) ? tasksResponse : (tasksResponse.data || tasksResponse.tasks || []);
         const mappedTasks = tasksList.map((t: any) => mapTaskFromAPI(t));
         if (mappedTasks.length > 0) {
-          const merged = mergeTasks(mappedTasks);
-          saveTasks(filterTasksForUser(merged, currentUser ?? user));
+          const filtered = filterTasksForUser(mappedTasks, currentUser ?? user);
+          saveTasks(filtered);
           logger.debug('API', 'Tarefas carregadas da API com sucesso', mappedTasks.length);
+        } else {
+          saveTasks([]);
         }
+      } else {
+        saveTasks([]);
       }
     } catch (error) {
-      logger.debug('API', 'Não foi possível carregar tarefas da API, usando dados locais', error);
+      logger.debug('API', 'Não foi possível carregar tarefas da API', error);
+      saveTasks([]);
     }
 
-    if ((currentUser ?? user)?.role !== UserRole.ADMIN) {
-      return;
-    }
-
-    try {
-      // Carregar utilizadores da API (somente admin)
-      const usersResponse = await apiAdminUsers.getAll();
-      if (usersResponse) {
-        const usersList = Array.isArray(usersResponse) ? usersResponse : (usersResponse.data || usersResponse.users || []);
-        const mappedUsers = usersList.map((u: any) => mapUserFromAPI(u));
-        if (mappedUsers.length > 0) {
-          saveUsers(mappedUsers);
-          logger.debug('API', 'Utilizadores carregados da API com sucesso', mappedUsers.length);
+    // Carregar utilizadores da API (somente admin)
+    if ((currentUser ?? user)?.role === UserRole.ADMIN) {
+      try {
+        const usersResponse = await apiAdminUsers.getAll();
+        if (usersResponse) {
+          const usersList = Array.isArray(usersResponse) ? usersResponse : (usersResponse.data || usersResponse.users || []);
+          const mappedUsers = usersList.map((u: any) => mapUserFromAPI(u));
+          if (mappedUsers.length > 0) {
+            saveUsers(mappedUsers);
+            logger.debug('API', 'Utilizadores carregados da API com sucesso', mappedUsers.length);
+          } else {
+            saveUsers([]);
+          }
+        } else {
+          saveUsers([]);
         }
+      } catch (error) {
+        logger.debug('API', 'Não foi possível carregar utilizadores da API', error);
+        saveUsers([]);
       }
-    } catch (error) {
-      logger.debug('API', 'Não foi possível carregar utilizadores da API, usando dados locais', error);
     }
   };
 
