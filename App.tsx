@@ -90,9 +90,25 @@ export default function App() {
   const [uploadingAvatarFor, setUploadingAvatarFor] = useState<string | null>(null);
   const [editingUserId, setEditingUserId] = useState<string | null>(null);
   const [isAddUserOpen, setIsAddUserOpen] = useState(false);
+  const [taskFormError, setTaskFormError] = useState<string | null>(null);
+  const [userFormError, setUserFormError] = useState<string | null>(null);
   const avatarInputRef = useRef<HTMLInputElement>(null);
 
   const t = TRANSLATIONS[lang];
+  const getAuthErrorMessage = (err: any) => {
+    const msg = (err?.message || '').toLowerCase();
+    if (
+      msg.includes('bad credentials') ||
+      msg.includes('unauthorized') ||
+      msg.includes('forbidden') ||
+      msg.includes('senha') ||
+      msg.includes('password') ||
+      msg.includes('credenciais')
+    ) {
+      return 'Email ou palavra-passe incorretos.';
+    }
+    return err?.message || 'Falha na autenticação com a API.';
+  };
 
   useEffect(() => {
     const savedTasks = JSON.parse(localStorage.getItem('gestora_tasks') || JSON.stringify(INITIAL_TASKS));
@@ -230,6 +246,9 @@ export default function App() {
   };
 
   const handleDeleteTask = async (task: Task) => {
+    if (!window.confirm(`Deseja eliminar a tarefa "${task.title}"? Esta ação não pode ser desfeita.`)) {
+      return;
+    }
     addSystemActivity({ userId: user!.id, userName: user!.name, action: 'deleted', entityType: 'task', entityId: task.id, entityTitle: task.title });
     
     try {
@@ -239,6 +258,7 @@ export default function App() {
       }
     } catch (apiError) {
       logger.warn('Task', 'Erro ao deletar na API, deletando localmente...', apiError);
+      addNotification(user!.id, 'Não foi possível eliminar na API. Removida localmente.', 'error');
     }
     
     saveTasks(tasks.filter(t => t.id !== task.id));
@@ -425,7 +445,7 @@ const LoginPage = () => {
       logger.warn('Auth', 'API login falhou', apiError);
       setAuthToken(null);
       setUser(null);
-      setErrorMessage(apiError?.message || 'Falha na autenticação com a API.');
+      setErrorMessage(getAuthErrorMessage(apiError));
     } finally {
       setIsLoading(false);
     }
@@ -905,7 +925,7 @@ const LoginPage = () => {
                     </select>
                  </div>
                  {user?.role === UserRole.ADMIN && (
-                   <Button onClick={() => { setEditingTaskId(null); setIsTaskModalOpen(true); }} className="px-6 sm:px-10 py-4 sm:py-5 rounded-2xl shadow-xl shadow-emerald-500/20 bg-[#10b981]"><Plus size={18} className="sm:w-5 sm:h-5"/> {t.createTask}</Button>
+                   <Button onClick={() => { setTaskFormError(null); setEditingTaskId(null); setIsTaskModalOpen(true); }} className="px-6 sm:px-10 py-4 sm:py-5 rounded-2xl shadow-xl shadow-emerald-500/20 bg-[#10b981]"><Plus size={18} className="sm:w-5 sm:h-5"/> {t.createTask}</Button>
                  )}
               </div>
 
@@ -918,7 +938,7 @@ const LoginPage = () => {
                     users={users}
                     onAdvance={() => handleAdvanceStatus(tk)} 
                     onDelete={() => handleDeleteTask(tk)}
-                    onEdit={user?.role === UserRole.ADMIN ? () => { setEditingTaskId(tk.id); setIsTaskModalOpen(true); } : undefined}
+                    onEdit={user?.role === UserRole.ADMIN ? () => { setTaskFormError(null); setEditingTaskId(tk.id); setIsTaskModalOpen(true); } : undefined}
                     onAddComment={(text: string) => addComment(tk.id, text)}
                   />
                 )) : (
@@ -935,7 +955,7 @@ const LoginPage = () => {
             <div className="max-w-7xl mx-auto space-y-6 sm:space-y-10 animate-in">
               <div className="flex justify-between items-center">
                 <h3 className="text-lg font-black">Gestão de Utilizadores</h3>
-                <Button onClick={() => setIsAddUserOpen(true)} className="px-6 py-3"><Plus size={18}/> {t.addUser}</Button>
+                <Button onClick={() => { setUserFormError(null); setIsAddUserOpen(true); }} className="px-6 py-3"><Plus size={18}/> {t.addUser}</Button>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
                 {users.map(u => (
@@ -949,7 +969,7 @@ const LoginPage = () => {
                       <p className="text-[10px] font-bold text-[#10b981] uppercase mt-1">{u.position || u.role}</p>
                     </div>
                     <div className="flex flex-col gap-2">
-                      <button onClick={() => setEditingUserId(u.id)} className="p-2 rounded-lg text-slate-400 hover:bg-emerald-50 hover:text-[#10b981]"><Pencil size={16}/></button>
+                      <button onClick={() => { setUserFormError(null); setEditingUserId(u.id); }} className="p-2 rounded-lg text-slate-400 hover:bg-emerald-50 hover:text-[#10b981]"><Pencil size={16}/></button>
                       <button onClick={() => { if (confirm(t.areYouSure)) saveUsers(users.filter(x => x.id !== u.id)); }} className="p-2 rounded-lg text-slate-400 hover:bg-rose-50 hover:text-rose-500"><Trash2 size={16}/></button>
                     </div>
                   </div>
@@ -1043,13 +1063,22 @@ const LoginPage = () => {
         return (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-[100] flex items-center justify-center p-4 sm:p-6 overflow-y-auto py-8 animate-in">
            <div className="bg-white dark:bg-slate-900 w-full max-w-3xl max-h-[90vh] overflow-y-auto rounded-2xl p-5 sm:p-6 border border-slate-100 dark:border-slate-800 shadow-2xl relative my-auto">
-              <button onClick={() => { setIsTaskModalOpen(false); setEditingTaskId(null); setTaskFormDeliveryPreview(''); }} className="absolute top-3 right-3 sm:top-4 sm:right-4 p-2 text-slate-300 hover:text-rose-500 transition-colors z-10"><X size={18} className="sm:w-5 sm:h-5"/></button>
+              <button onClick={() => { setIsTaskModalOpen(false); setEditingTaskId(null); setTaskFormDeliveryPreview(''); setTaskFormError(null); }} className="absolute top-3 right-3 sm:top-4 sm:right-4 p-2 text-slate-300 hover:text-rose-500 transition-colors z-10"><X size={18} className="sm:w-5 sm:h-5"/></button>
               <h2 className="text-lg sm:text-xl font-black tracking-tighter mb-4 uppercase text-slate-800 dark:text-white">{editTask ? 'Editar Tarefa' : 'Nova Actividade'}</h2>
+              {taskFormError && (
+                <div className="mb-4 p-3 bg-rose-50 border border-rose-200 rounded-lg">
+                  <div className="flex items-start gap-2">
+                    <AlertTriangle className="text-rose-500 mt-0.5 flex-shrink-0" size={16} />
+                    <p className="text-rose-700 text-sm">{taskFormError}</p>
+                  </div>
+                </div>
+              )}
               <form id="taskForm" className="grid grid-cols-1 md:grid-cols-2 gap-2 sm:gap-3" onSubmit={async (e) => {
                 e.preventDefault();
                 const fd = new FormData(e.target as HTMLFormElement);
                 const ids = fd.getAll('responsibleIds') as string[];
-                if (!ids || ids.length === 0) { alert('Selecione pelo menos um responsável.'); return; }
+                if (!ids || ids.length === 0) { setTaskFormError('Selecione pelo menos um responsável.'); return; }
+                setTaskFormError(null);
                 const start = fd.get('startDate') as string;
                 const val = Number(fd.get('deadlineValue'));
                 const type = (fd.get('deadlineType') as 'days'|'hours') || 'days';
@@ -1075,8 +1104,10 @@ const LoginPage = () => {
                     } else {
                       saveTasks(updated);
                     }
+                    addNotification(user!.id, 'Tarefa atualizada com sucesso.', 'success');
                   } catch (error) {
                     logger.warn('Task', 'Erro ao atualizar na API, atualizando localmente...', error);
+                    addNotification(user!.id, 'Não foi possível atualizar na API. Os dados foram salvos localmente.', 'error');
                     saveTasks(updated);
                   }
                   
@@ -1099,8 +1130,10 @@ const LoginPage = () => {
                       saveTasks([newTask, ...tasks]);
                       addSystemActivity({ userId: user!.id, userName: user!.name, action: 'created', entityType: 'task', entityId: newTask.id, entityTitle: newTask.title });
                     }
+                    addNotification(user!.id, 'Tarefa criada com sucesso.', 'success');
                   } catch (error) {
                     logger.warn('Task', 'Erro ao criar na API, criando localmente...', error);
+                    addNotification(user!.id, 'Não foi possível criar na API. A tarefa foi criada localmente.', 'error');
                     saveTasks([newTask, ...tasks]);
                     addSystemActivity({ userId: user!.id, userName: user!.name, action: 'created', entityType: 'task', entityId: newTask.id, entityTitle: newTask.title });
                   }
@@ -1160,8 +1193,17 @@ const LoginPage = () => {
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-[100] flex items-center justify-center p-4">
           <div className="bg-white dark:bg-slate-900 w-full max-w-md rounded-2xl p-8 border border-slate-100 dark:border-slate-800 shadow-2xl">
             <h2 className="text-2xl font-black mb-6">Novo Utilizador</h2>
+            {userFormError && (
+              <div className="mb-4 p-3 bg-rose-50 border border-rose-200 rounded-lg">
+                <div className="flex items-start gap-2">
+                  <AlertTriangle className="text-rose-500 mt-0.5 flex-shrink-0" size={16} />
+                  <p className="text-rose-700 text-sm">{userFormError}</p>
+                </div>
+              </div>
+            )}
             <form onSubmit={async (e) => {
               e.preventDefault();
+              setUserFormError(null);
               const fd = new FormData(e.target as HTMLFormElement);
               const newUser: User = { id: 'u-' + Math.random().toString(36).substr(2, 9), name: fd.get('name') as string, email: fd.get('email') as string, role: (fd.get('role') as UserRole) || UserRole.EMPLOYEE, position: (fd.get('position') as string) || '' };
               let createdUser = newUser;
@@ -1185,6 +1227,7 @@ const LoginPage = () => {
                 }
               } catch (error) {
                 logger.warn('User', 'Erro ao criar utilizador na API, criando localmente...', error);
+                setUserFormError('Não foi possível criar na API. O utilizador foi criado localmente.');
               }
               
               saveUsers([...users, createdUser]);
@@ -1197,7 +1240,7 @@ const LoginPage = () => {
                 <div><label className="text-[10px] font-black uppercase text-slate-400 block mb-1">Função</label><select name="role" className="w-full px-4 py-3 rounded-xl bg-slate-50 dark:bg-slate-800 font-bold"><option value={UserRole.EMPLOYEE}>Funcionário</option><option value={UserRole.ADMIN}>Administrador</option></select></div>
                 <p className="text-[10px] text-slate-400">Será enviado um link por email para definir a palavra-passe.</p>
               </div>
-              <div className="flex gap-3 mt-6"><Button type="submit" className="flex-1">Adicionar</Button><Button type="button" variant="ghost" onClick={() => setIsAddUserOpen(false)}>{t.cancel}</Button></div>
+              <div className="flex gap-3 mt-6"><Button type="submit" className="flex-1">Adicionar</Button><Button type="button" variant="ghost" onClick={() => { setUserFormError(null); setIsAddUserOpen(false); }}>{t.cancel}</Button></div>
             </form>
           </div>
         </div>
@@ -1211,8 +1254,17 @@ const LoginPage = () => {
           <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-[100] flex items-center justify-center p-4">
             <div className="bg-white dark:bg-slate-900 w-full max-w-md rounded-2xl p-8 border border-slate-100 dark:border-slate-800 shadow-2xl">
               <h2 className="text-2xl font-black mb-6">{t.editUser}</h2>
+              {userFormError && (
+                <div className="mb-4 p-3 bg-rose-50 border border-rose-200 rounded-lg">
+                  <div className="flex items-start gap-2">
+                    <AlertTriangle className="text-rose-500 mt-0.5 flex-shrink-0" size={16} />
+                    <p className="text-rose-700 text-sm">{userFormError}</p>
+                  </div>
+                </div>
+              )}
               <form onSubmit={async (e) => {
                 e.preventDefault();
+                setUserFormError(null);
                 const fd = new FormData(e.target as HTMLFormElement);
                 const updated = users.map(x => x.id !== editingUserId ? x : { ...x, name: fd.get('name') as string, email: fd.get('email') as string, position: fd.get('position') as string, role: (fd.get('role') as UserRole) || x.role });
                 
@@ -1220,6 +1272,7 @@ const LoginPage = () => {
                   await apiUsers.update(editingUserId, updated.find(x => x.id === editingUserId)!);
                 } catch (error) {
                   logger.warn('User', 'Erro ao atualizar utilizador na API, atualizando localmente...');
+                  setUserFormError('Não foi possível atualizar na API. Os dados foram salvos localmente.');
                 }
                 
                 saveUsers(updated);
@@ -1231,7 +1284,7 @@ const LoginPage = () => {
                   <div><label className="text-[10px] font-black uppercase text-slate-400 block mb-1">{t.position}</label><input name="position" defaultValue={u.position} className="w-full px-4 py-3 rounded-xl bg-slate-50 dark:bg-slate-800 font-bold" /></div>
                   <div><label className="text-[10px] font-black uppercase text-slate-400 block mb-1">Função</label><select name="role" defaultValue={u.role} className="w-full px-4 py-3 rounded-xl bg-slate-50 dark:bg-slate-800 font-bold"><option value={UserRole.EMPLOYEE}>Funcionário</option><option value={UserRole.ADMIN}>Administrador</option></select></div>
                 </div>
-                <div className="flex gap-3 mt-6"><Button type="submit" className="flex-1">{t.save}</Button><Button type="button" variant="ghost" onClick={() => setEditingUserId(null)}>{t.cancel}</Button></div>
+                <div className="flex gap-3 mt-6"><Button type="submit" className="flex-1">{t.save}</Button><Button type="button" variant="ghost" onClick={() => { setUserFormError(null); setEditingUserId(null); }}>{t.cancel}</Button></div>
               </form>
             </div>
           </div>
