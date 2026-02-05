@@ -1797,6 +1797,13 @@ const LoginPage = () => {
               let createdUser = newUser;
 
               try {
+                // Verificar se o email já existe localmente
+                const emailExistsLocally = users.some(u => u.email.toLowerCase() === newUser.email.toLowerCase());
+                if (emailExistsLocally) {
+                  setUserFormError('Este email já está cadastrado no sistema. Use um email diferente.');
+                  return;
+                }
+                
                 const apiResponse = await apiAdminUsers.create({
                   name: newUser.name,
                   email: newUser.email,
@@ -1812,7 +1819,12 @@ const LoginPage = () => {
                 if (apiResponse?.inviteLink) {
                   logger.debug('User', 'Link de convite gerado', apiResponse.inviteLink);
                 }
-              } catch (error) {
+              } catch (error: any) {
+                // Verificar se é erro de email duplicado (409)
+                if (error.message?.includes('409') || error.message?.includes('Conflict') || error.message?.toLowerCase().includes('email') || error.message?.toLowerCase().includes('duplicate')) {
+                  setUserFormError('Este email já está cadastrado no sistema. Use um email diferente.');
+                  return;
+                }
                 logger.warn('User', 'Erro ao criar utilizador na API, criando localmente...', error);
                 setUserFormError('Não foi possível criar na API. O utilizador foi criado localmente.');
               }
