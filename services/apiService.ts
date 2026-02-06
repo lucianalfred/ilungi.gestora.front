@@ -2,17 +2,10 @@
 
 /**
  * API Service para comunicação com o backend ILUNGI GESTORA API
- * Base URL: https://ilungi-gestora-api-oox9.onrender.com/api
+ * Base URL: https://ilungi-gestora-api-oox9.onrender.com
  */
 
 type Json = Record<string, any>;
-
-function normalizeApiBase(baseUrl: string): string {
-  const trimmed = String(baseUrl || "").replace(/\/+$/, "");
-  if (!trimmed) return "";
-  if (/\/api$/i.test(trimmed)) return trimmed;
-  return `${trimmed}/api`;
-}
 
 function getApiBase(): string {
   const viteBase =
@@ -25,7 +18,7 @@ function getApiBase(): string {
     (typeof window !== "undefined" && (window as any).VITE_API_BASE_URL) || "";
 
   const base = viteBase || winBase || "https://ilungi-gestora-api-oox9.onrender.com";
-  return normalizeApiBase(base);
+  return String(base || "").replace(/\/+$/, "");
 }
 
 const API_BASE = getApiBase();
@@ -221,8 +214,40 @@ export const apiAdminTasks = {
 
   assignUser: async (taskId: string, userId: string) => {
     const res = await fetch(`${API_BASE}/admin/tasks/${taskId}/assign/${userId}`, { 
-      method: "PATCH", 
+      method: "POST", 
       headers: getHeaders() 
+    });
+    return handleResponse(res);
+  },
+
+  assignMultipleUsers: async (taskId: string, userIds: string[]) => {
+    const res = await fetch(`${API_BASE}/admin/tasks/${taskId}/assign-multiple`, {
+      method: "POST",
+      headers: getHeaders(),
+      body: JSON.stringify(userIds),
+    });
+    return handleResponse(res);
+  },
+
+  removeUser: async (taskId: string, userId: string) => {
+    const res = await fetch(`${API_BASE}/admin/tasks/${taskId}/assign/${userId}`, {
+      method: "DELETE",
+      headers: getHeaders(),
+    });
+    return handleResponse(res);
+  },
+
+  createWithResponsibles: async (taskData: {
+    title: string;
+    description?: string;
+    daysToFinish?: number;
+    status?: string;
+    responsibles: Array<string | number>;
+  }) => {
+    const res = await fetch(`${API_BASE}/admin/tasks`, {
+      method: "POST",
+      headers: getHeaders(),
+      body: JSON.stringify(taskData),
     });
     return handleResponse(res);
   },
@@ -276,10 +301,9 @@ export const apiAdminUsers = {
   },
 
   changeRole: async (id: string, role: string) => {
-    const res = await fetch(`${API_BASE}/admin/users/${id}/role`, { 
+    const res = await fetch(`${API_BASE}/admin/users/${id}/role?role=${encodeURIComponent(role)}`, { 
       method: "PATCH", 
       headers: getHeaders(),
-      body: JSON.stringify({ role }),
     });
     return handleResponse(res);
   },
@@ -300,6 +324,11 @@ export const apiAdmin = {
 
 // =================== USER SELF-SERVICE ===================
 export const apiUsers = {
+  getAll: async () => {
+    const res = await fetch(`${API_BASE}/admin/users`, { method: "GET", headers: getHeaders() });
+    return handleResponse(res);
+  },
+
   update: async (id: string, data: { name?: string; phone?: string; email?: string }) => {
     const res = await fetch(`${API_BASE}/users/${id}`, {
       method: "PUT",
@@ -315,10 +344,9 @@ export const apiUsers = {
   },
 
   changeRole: async (id: string, role: string) => {
-    const res = await fetch(`${API_BASE}/users/${id}/role`, { 
+    const res = await fetch(`${API_BASE}/users/${id}/role?role=${encodeURIComponent(role)}`, { 
       method: "PATCH", 
       headers: getHeaders(),
-      body: JSON.stringify({ role }),
     });
     return handleResponse(res);
   },
@@ -372,6 +400,74 @@ export const apiComments = {
   },
 };
 
+// =================== ACTIVITIES ===================
+export const apiActivities = {
+  getAll: async () => {
+    const res = await fetch(`${API_BASE}/activities`, { method: "GET", headers: getHeaders() });
+    return handleResponse(res);
+  },
+
+  getByTaskId: async (taskId: string) => {
+    const res = await fetch(`${API_BASE}/activities/task/${taskId}`, { method: "GET", headers: getHeaders() });
+    return handleResponse(res);
+  },
+};
+
+// =================== NOTIFICATIONS ===================
+export const apiNotifications = {
+  getAll: async () => {
+    const res = await fetch(`${API_BASE}/notifications`, { method: "GET", headers: getHeaders() });
+    return handleResponse(res);
+  },
+
+  markAsRead: async (id: string) => {
+    const res = await fetch(`${API_BASE}/notifications/${id}/read`, { method: "PATCH", headers: getHeaders() });
+    return handleResponse(res);
+  },
+};
+
+// =================== REPORTS ===================
+export const apiReports = {
+  getStats: async () => {
+    const res = await fetch(`${API_BASE}/reports/stats`, { method: "GET", headers: getHeaders() });
+    return handleResponse(res);
+  },
+
+  getUserPerformance: async () => {
+    const res = await fetch(`${API_BASE}/reports/user-performance`, { method: "GET", headers: getHeaders() });
+    return handleResponse(res);
+  },
+
+  getTaskStats: async () => {
+    const res = await fetch(`${API_BASE}/reports/task-stats`, { method: "GET", headers: getHeaders() });
+    return handleResponse(res);
+  },
+};
+
+// =================== HEALTH ===================
+export const apiHealth = {
+  ping: async () => {
+    const attempt = async (path: string) => {
+      const res = await fetch(`${API_BASE}${path}`, { method: "GET" });
+      if (!res.ok) {
+        const error: Error & { status?: number } = new Error(res.statusText);
+        error.status = res.status;
+        throw error;
+      }
+      return handleResponse(res);
+    };
+
+    try {
+      return await attempt("/actuator/health");
+    } catch (error: any) {
+      if (error?.status === 404 && !/\/api$/i.test(API_BASE)) {
+        return attempt("/api/actuator/health");
+      }
+      throw error;
+    }
+  },
+};
+
 // =================== MAPPERS ===================
 export const mapUserFromAPI = (apiUser: any) => {
   return {
@@ -421,6 +517,10 @@ export default {
   apiTasks,
   apiUsers,
   apiComments,
+  apiActivities,
+  apiNotifications,
+  apiReports,
+  apiHealth,
   apiAdminUsers,
   apiAdminTasks,
   apiAdmin,
