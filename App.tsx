@@ -11,9 +11,9 @@ import {
   StatusOrder,
   SystemActivity 
 } from './types';
-import { MOCK_USERS, TRANSLATIONS, STATUS_COLORS, INITIAL_TASKS } from './constants';
+import { TRANSLATIONS, STATUS_COLORS } from './constants';
 import { getSmartNotification } from './services/geminiService';
-import { setAuthToken, apiAuth, apiTasks, apiUsers, apiComments, apiAdminUsers, apiAdmin, apiAdminTasks, mapTaskFromAPI, mapUserFromAPI, mapCommentFromAPI } from './services/apiService';
+import { setAuthToken, apiAuth, apiTasks, apiUsers, apiComments, apiAdminUsers, mapTaskFromAPI, mapUserFromAPI, mapCommentFromAPI } from './services/apiService';
 import { logger } from './services/logger';
 import { 
   LayoutDashboard, 
@@ -225,13 +225,14 @@ export default function App() {
 
   const loadDataFromAPI = async (currentUser?: User | null) => {
     try {
-      // Carregar tarefas da API para todos os utilizadores
-      const tasksResponse = await apiTasks.getAll();
+      const activeUser = currentUser ?? user;
+      const isAdmin = activeUser?.role === UserRole.ADMIN;
+      const tasksResponse = isAdmin ? await apiTasks.getAll() : await apiTasks.getMyTasks();
       if (tasksResponse) {
         const tasksList = Array.isArray(tasksResponse) ? tasksResponse : (tasksResponse.data || tasksResponse.tasks || []);
         const mappedTasks = tasksList.map((t: any) => mapTaskFromAPI(t));
         if (mappedTasks.length > 0) {
-          const filtered = filterTasksForUser(mappedTasks, currentUser ?? user);
+          const filtered = filterTasksForUser(mappedTasks, activeUser);
           saveTasks(filtered);
           logger.debug('API', 'Tarefas carregadas da API com sucesso', mappedTasks.length);
         } else {
@@ -282,21 +283,16 @@ export default function App() {
 
   const saveTasks = (newTasks: Task[]) => {
     setTasks(newTasks);
-    localStorage.setItem('gestora_tasks', JSON.stringify(newTasks));
   };
 
   const saveUsers = (newUsers: User[]) => {
     setUsers(newUsers);
-    localStorage.setItem('gestora_users', JSON.stringify(newUsers));
   };
-
-  const isLocalTaskId = (id: string) => id.toUpperCase().startsWith('T-');
 
   const addComment = async (taskId: string, text: string) => {
     if (!user) return;
     
     try {
-      // Tentar enviar para API
       const response = await apiComments.create(taskId, text);
       if (response && response.id) {
         // Mapear e atualizar localmente com resposta da API
@@ -308,33 +304,24 @@ export default function App() {
         return;
       }
     } catch (apiError) {
-      logger.warn('Comment', 'API comentário falhou, salvando localmente...', apiError);
+      logger.warn('Comment', 'API comentário falhou', apiError);
+      addNotification(user.id, 'Não foi possível adicionar o comentário. Tente novamente.', 'error');
     }
-    
-    // Fallback: salvar localmente se API falhar
-    const comment = { id: 'C-' + Math.random().toString(36).substr(2, 6).toUpperCase(), userId: user.id, userName: user.name, text, timestamp: new Date().toISOString() };
-    const updatedTasks = tasks.map(t => t.id === taskId ? { ...t, comments: [...(t.comments || []), comment], updatedAt: new Date().toISOString() } : t);
-    saveTasks(updatedTasks);
-    addSystemActivity({ userId: user.id, userName: user.name, action: 'commented', entityType: 'task', entityId: taskId, entityTitle: tasks.find(x => x.id === taskId)?.title });
   };
 
   const handleDeleteTask = async (task: Task) => {
     if (!window.confirm(`Deseja eliminar a tarefa "${task.title}"? Esta ação não pode ser desfeita.`)) {
       return;
     }
-    addSystemActivity({ userId: user!.id, userName: user!.name, action: 'deleted', entityType: 'task', entityId: task.id, entityTitle: task.title });
     
     try {
-      // Tentar deletar na API apenas se não for tarefa local
-      if (!isLocalTaskId(task.id)) {
-        await apiTasks.delete(task.id);
-      }
+      await apiTasks.delete(task.id);
+      saveTasks(tasks.filter(t => t.id !== task.id));
+      addSystemActivity({ userId: user!.id, userName: user!.name, action: 'deleted', entityType: 'task', entityId: task.id, entityTitle: task.title });
     } catch (apiError) {
-      logger.warn('Task', 'Erro ao deletar na API, deletando localmente...', apiError);
-      addNotification(user!.id, 'Não foi possível eliminar na API. Removida localmente.', 'error');
+      logger.warn('Task', 'Erro ao deletar na API', apiError);
+      addNotification(user!.id, 'Não foi possível eliminar a tarefa na API.', 'error');
     }
-    
-    saveTasks(tasks.filter(t => t.id !== task.id));
   };
 
   const handleDeleteUser = async (userId: string) => {
@@ -346,17 +333,14 @@ export default function App() {
     if (!userToDelete) return;
     
     try {
-      // Tentar deletar na API
       await apiAdminUsers.delete(userId);
       logger.debug('User', 'Utilizador eliminado na API', userId);
       addNotification(user!.id, `Utilizador ${userToDelete.name} eliminado com sucesso.`, 'success');
+      saveUsers(users.filter(u => u.id !== userId));
     } catch (apiError) {
-      logger.warn('User', 'Erro ao eliminar na API, eliminando localmente...', apiError);
-      addNotification(user!.id, `Não foi possível eliminar ${userToDelete.name} na API. Removido localmente.`, 'error');
+      logger.warn('User', 'Erro ao eliminar na API', apiError);
+      addNotification(user!.id, `Não foi possível eliminar ${userToDelete.name} na API.`, 'error');
     }
-    
-    // Sempre remove localmente também
-    saveUsers(users.filter(u => u.id !== userId));
   };
 
   const recalcDelivery = (form: HTMLFormElement) => {
@@ -379,35 +363,31 @@ export default function App() {
     if (user?.role === UserRole.EMPLOYEE && !isTaskMember) return;
     if (task.status === TaskStatus.TERMINADO && user?.role !== UserRole.ADMIN) return;
 
-    const updatedTasks = tasks.map(tk => tk.id === task.id ? { 
-      ...tk, 
-      status: nextStatus, 
-      updatedAt: new Date().toISOString(),
-      closedAt: nextStatus === TaskStatus.FECHADO ? new Date().toISOString() : tk.closedAt
-    } : tk);
-    
-    // Se é um empregado avançando estado, adiciona um comentário automático
-    if (user?.role === UserRole.EMPLOYEE) {
-      const comment = { 
-        id: 'C-' + Math.random().toString(36).substr(2, 6).toUpperCase(), 
-        userId: user.id, 
-        userName: user.name, 
-        text: `Avançou o estado para ${nextStatus}`, 
-        timestamp: new Date().toISOString() 
-      };
-      const withComments = updatedTasks.map(tk => tk.id === task.id ? { ...tk, comments: [...(tk.comments || []), comment] } : tk);
-      saveTasks(withComments);
-    } else {
-      saveTasks(updatedTasks);
-    }
-    
     try {
-      const isLocalId = typeof task.id === 'string' && task.id.toUpperCase().startsWith('T-');
-      if (!isLocalId) {
-        await apiTasks.updateStatus(task.id, nextStatus);
+      const response = await apiTasks.updateStatus(task.id, nextStatus);
+      const updatedTask = response ? mapTaskFromAPI(response) : { 
+        ...task, 
+        status: nextStatus, 
+        updatedAt: new Date().toISOString(),
+        closedAt: nextStatus === TaskStatus.FECHADO ? new Date().toISOString() : task.closedAt
+      };
+      const nextTasks = tasks.map(tk => tk.id === task.id ? { ...tk, ...updatedTask } : tk);
+      saveTasks(nextTasks);
+      if (user?.role === UserRole.EMPLOYEE) {
+        try {
+          const commentResponse = await apiComments.create(task.id, `Avançou o estado para ${nextStatus}`);
+          if (commentResponse && commentResponse.id) {
+            const mappedComment = mapCommentFromAPI(commentResponse);
+            saveTasks(nextTasks.map(tk => tk.id === task.id ? { ...tk, comments: [...(tk.comments || []), mappedComment] } : tk));
+          }
+        } catch (commentError) {
+          logger.warn('Comment', 'Erro ao criar comentário automático na API', commentError);
+        }
       }
     } catch (error) {
-      logger.warn('Task', 'Erro ao atualizar status na API, atualizado localmente...', error);
+      logger.warn('Task', 'Erro ao atualizar status na API', error);
+      addNotification(user!.id, 'Não foi possível atualizar o estado na API.', 'error');
+      return;
     }
     
     addSystemActivity({ userId: user!.id, userName: user!.name, action: 'status_changed', entityType: 'task', entityId: task.id, entityTitle: task.title, fromStatus: task.status, toStatus: nextStatus });
@@ -1508,7 +1488,7 @@ const LoginPage = () => {
                     Por segurança, altere sua senha para continuar.
                   </div>
                 )}
-                <form onSubmit={(e) => {
+                <form onSubmit={async (e) => {
                   e.preventDefault();
                   const fd = new FormData(e.target as HTMLFormElement);
                   const patch: Partial<User> = { name: fd.get('name') as string, email: fd.get('email') as string };
@@ -1517,9 +1497,27 @@ const LoginPage = () => {
                     patch.department = fd.get('department') as string;
                     patch.role = (fd.get('role') as UserRole) || user!.role;
                   }
-                  const updated = { ...user!, ...patch };
-                  saveUsers(users.map(u => u.id === user!.id ? updated : u));
-                  setUser(updated);
+                  try {
+                    if (user!.role !== UserRole.ADMIN && patch.email !== user!.email) {
+                      addNotification(user!.id, 'O email só pode ser alterado por um administrador.', 'error');
+                      return;
+                    }
+                    if (user!.role === UserRole.ADMIN) {
+                      await apiUsers.update(user!.id, { name: patch.name, email: patch.email });
+                    } else {
+                      await apiUsers.updateProfile(user!.id, { name: patch.name });
+                    }
+                    if (patch.role && patch.role !== user!.role) {
+                      await apiAdminUsers.changeRole(user!.id, patch.role);
+                    }
+                    const updated = { ...user!, ...patch };
+                    saveUsers(users.map(u => u.id === user!.id ? updated : u));
+                    setUser(updated);
+                    addNotification(user!.id, 'Perfil atualizado com sucesso.', 'success');
+                  } catch (error) {
+                    logger.warn('User', 'Erro ao atualizar perfil na API', error);
+                    addNotification(user!.id, 'Não foi possível atualizar o perfil na API.', 'error');
+                  }
                 }}>
                   <div className="flex flex-col sm:flex-row gap-6 mb-8">
                     <button type="button" onClick={() => openAvatarUpload(user!.id)} className="flex-shrink-0 w-24 h-24 rounded-2xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center overflow-hidden self-center sm:self-start">
@@ -1578,13 +1576,8 @@ const LoginPage = () => {
                     setProfilePasswordSuccess('Senha atualizada com sucesso.');
                     setActiveTabSafe('dashboard');
                   } catch (error) {
-                    const updatedUser = { ...user!, mustChangePassword: false, localPassword: profilePassword };
-                    saveUsers(users.map(u => u.id === user!.id ? updatedUser : u));
-                    setUser(updatedUser);
-                    setProfilePassword('');
-                    setProfilePasswordConfirm('');
-                    setProfilePasswordSuccess('Senha atualizada localmente com sucesso.');
-                    setActiveTabSafe('dashboard');
+                    logger.warn('User', 'Erro ao atualizar senha na API', error);
+                    setProfilePasswordError('Não foi possível atualizar a senha na API.');
                   }
                 }}>
                   <div className="space-y-4">
@@ -1679,51 +1672,40 @@ const LoginPage = () => {
                   
                   try {
                     const taskToUpdate = updated.find(t => t.id === editTask.id)!;
-                    if (!isLocalTaskId(editTask.id)) {
-                      const apiResponse = await apiTasks.update(editTask.id, taskToUpdate);
-                      if (apiResponse && apiResponse.id) {
-                        // Se a API retornar dados atualizados, usar esses
-                        const mappedTask = mapTaskFromAPI(apiResponse);
-                        saveTasks(updated.map(t => t.id === editTask.id ? mappedTask : t));
-                        logger.debug('Task', 'Tarefa atualizada na API com sucesso');
-                      } else {
-                        saveTasks(updated);
-                      }
+                    const apiResponse = await apiTasks.update(editTask.id, taskToUpdate);
+                    if (apiResponse && apiResponse.id) {
+                      // Se a API retornar dados atualizados, usar esses
+                      const mappedTask = mapTaskFromAPI(apiResponse);
+                      saveTasks(updated.map(t => t.id === editTask.id ? mappedTask : t));
+                      logger.debug('Task', 'Tarefa atualizada na API com sucesso');
                     } else {
                       saveTasks(updated);
                     }
                     addNotification(user!.id, 'Tarefa atualizada com sucesso.', 'success');
                   } catch (error) {
-                    logger.warn('Task', 'Erro ao atualizar na API, atualizando localmente...', error);
-                    addNotification(user!.id, 'Não foi possível atualizar na API. Os dados foram salvos localmente.', 'error');
-                    saveTasks(updated);
+                    logger.warn('Task', 'Erro ao atualizar na API', error);
+                    addNotification(user!.id, 'Não foi possível atualizar na API.', 'error');
+                    return;
                   }
                   
                   addSystemActivity({ userId: user!.id, userName: user!.name, action: 'updated', entityType: 'task', entityId: editTask.id, entityTitle: fd.get('title') as string });
                   setEditingTaskId(null); setIsTaskModalOpen(false);
                 } else {
-                  const newTask: Task = { id: 'T-' + Math.random().toString(36).substr(2, 6).toUpperCase(), title: fd.get('title') as string, description: fd.get('description') as string, startDate: start, deadlineValue: val, deadlineType: type, deliveryDate: delivery.toISOString(), responsibleId: ids[0], intervenientes: ids.slice(1), status: TaskStatus.ABERTO, comments: [], createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
-                  
                   try {
-                    // Tentar criar na API sem enviar o id local
-                    const { id: _localId, ...payload } = newTask as any;
+                    const payload = { title: fd.get('title') as string, description: fd.get('description') as string, startDate: start, deadlineValue: val, deadlineType: type, deliveryDate: delivery.toISOString(), responsibleId: ids[0], intervenientes: ids.slice(1), status: TaskStatus.ABERTO };
                     const apiResponse = await apiTasks.create(payload);
-                    if (apiResponse && apiResponse.id) {
-                      // Se a API retornar a tarefa criada, usar esses dados
-                      const mappedTask = mapTaskFromAPI(apiResponse);
-                      saveTasks([mappedTask, ...tasks]);
-                      logger.debug('Task', 'Tarefa criada na API com sucesso');
-                      addSystemActivity({ userId: user!.id, userName: user!.name, action: 'created', entityType: 'task', entityId: mappedTask.id, entityTitle: mappedTask.title });
-                    } else {
-                      saveTasks([newTask, ...tasks]);
-                      addSystemActivity({ userId: user!.id, userName: user!.name, action: 'created', entityType: 'task', entityId: newTask.id, entityTitle: newTask.title });
+                    if (!apiResponse || !apiResponse.id) {
+                      throw new Error('Resposta inválida da API.');
                     }
+                    const mappedTask = mapTaskFromAPI(apiResponse);
+                    saveTasks([mappedTask, ...tasks]);
+                    logger.debug('Task', 'Tarefa criada na API com sucesso');
+                    addSystemActivity({ userId: user!.id, userName: user!.name, action: 'created', entityType: 'task', entityId: mappedTask.id, entityTitle: mappedTask.title });
                     addNotification(user!.id, 'Tarefa criada com sucesso.', 'success');
                   } catch (error) {
-                    logger.warn('Task', 'Erro ao criar na API, criando localmente...', error);
-                    addNotification(user!.id, 'Não foi possível criar na API. A tarefa foi criada localmente.', 'error');
-                    saveTasks([newTask, ...tasks]);
-                    addSystemActivity({ userId: user!.id, userName: user!.name, action: 'created', entityType: 'task', entityId: newTask.id, entityTitle: newTask.title });
+                    logger.warn('Task', 'Erro ao criar na API', error);
+                    addNotification(user!.id, 'Não foi possível criar na API.', 'error');
+                    return;
                   }
                   
                   setIsTaskModalOpen(false);
@@ -1793,8 +1775,8 @@ const LoginPage = () => {
               e.preventDefault();
               setUserFormError(null);
               const fd = new FormData(e.target as HTMLFormElement);
-              const newUser: User = { id: 'u-' + Math.random().toString(36).substr(2, 9), name: fd.get('name') as string, email: fd.get('email') as string, role: (fd.get('role') as UserRole) || UserRole.EMPLOYEE, position: (fd.get('position') as string) || '', mustChangePassword: true, localPassword: '' };
-              let createdUser = newUser;
+              const newUser = { name: fd.get('name') as string, email: fd.get('email') as string, role: (fd.get('role') as UserRole) || UserRole.EMPLOYEE };
+              let createdUser: User | null = null;
 
               try {
                 // Verificar se o email já existe localmente
@@ -1825,14 +1807,17 @@ const LoginPage = () => {
                   setUserFormError('Este email já está cadastrado no sistema. Use um email diferente.');
                   return;
                 }
-                logger.warn('User', 'Erro ao criar utilizador na API, criando localmente...', error);
-                setUserFormError('Não foi possível criar na API. O utilizador foi criado localmente.');
+                logger.warn('User', 'Erro ao criar utilizador na API', error);
+                setUserFormError('Não foi possível criar na API.');
+                return;
               }
               
-              saveUsers([...users, createdUser]);
-              if (createdUser.localPassword) {
-                addNotification(user!.id, `Credenciais temporárias de ${createdUser.email}: ${createdUser.localPassword}`, 'info');
+              if (!createdUser) {
+                setUserFormError('Não foi possível obter o utilizador criado na API.');
+                return;
               }
+
+              saveUsers([...users, createdUser]);
               users.filter(u => u.role === UserRole.ADMIN).forEach(u => {
                 addNotification(u.id, `Novo utilizador criado: ${createdUser.name} (${createdUser.email})`, 'info');
               });
@@ -1875,19 +1860,18 @@ const LoginPage = () => {
                 
                 try {
                   await apiUsers.update(editingUserId, updated.find(x => x.id === editingUserId)!);
+                  saveUsers(updated);
+                  users.filter(u => u.role === UserRole.ADMIN).forEach(u => {
+                    const updatedUser = updated.find(x => x.id === editingUserId);
+                    if (updatedUser) {
+                      addNotification(u.id, `Utilizador atualizado: ${updatedUser.name} (${updatedUser.email})`, 'info');
+                    }
+                  });
+                  setEditingUserId(null);
                 } catch (error) {
-                  logger.warn('User', 'Erro ao atualizar utilizador na API, atualizando localmente...');
-                  setUserFormError('Não foi possível atualizar na API. Os dados foram salvos localmente.');
+                  logger.warn('User', 'Erro ao atualizar utilizador na API', error);
+                  setUserFormError('Não foi possível atualizar na API.');
                 }
-                
-                saveUsers(updated);
-                users.filter(u => u.role === UserRole.ADMIN).forEach(u => {
-                  const updatedUser = updated.find(x => x.id === editingUserId);
-                  if (updatedUser) {
-                    addNotification(u.id, `Utilizador atualizado: ${updatedUser.name} (${updatedUser.email})`, 'info');
-                  }
-                });
-                setEditingUserId(null);
               }}>
                 <div className="space-y-4">
                   <div><label className="text-[10px] font-black uppercase text-slate-400 block mb-1">{t.name}</label><input name="name" defaultValue={u.name} className="w-full px-4 py-3 rounded-xl bg-slate-50 dark:bg-slate-800 font-bold" required /></div>
