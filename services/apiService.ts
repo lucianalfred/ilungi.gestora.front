@@ -2,10 +2,17 @@
 
 /**
  * API Service para comunicação com o backend ILUNGI GESTORA API
- * Base URL: https://ilungi-gestora-api-oox9.onrender.com
+ * Base URL: https://ilungi-gestora-api-oox9.onrender.com/api
  */
 
 type Json = Record<string, any>;
+
+function normalizeApiBase(baseUrl: string): string {
+  const trimmed = String(baseUrl || "").replace(/\/+$/, "");
+  if (!trimmed) return "";
+  if (/\/api$/i.test(trimmed)) return trimmed;
+  return `${trimmed}/api`;
+}
 
 function getApiBase(): string {
   const viteBase =
@@ -18,7 +25,7 @@ function getApiBase(): string {
     (typeof window !== "undefined" && (window as any).VITE_API_BASE_URL) || "";
 
   const base = viteBase || winBase || "https://ilungi-gestora-api-oox9.onrender.com";
-  return String(base).replace(/\/$/, "");
+  return normalizeApiBase(base);
 }
 
 const API_BASE = getApiBase();
