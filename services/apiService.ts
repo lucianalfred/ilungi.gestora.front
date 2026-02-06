@@ -1,88 +1,83 @@
- // apiService.ts
-
 /**
  * API Service para comunicação com o backend ILUNGI GESTORA API
- * Base URL: https://ilungi-gestora-api-oox9.onrender.com
+ * Configure VITE_API_BASE_URL no seu .env
  */
 
 type Json = Record<string, any>;
 
+// Obter URL base da API
 function getApiBase(): string {
-  const viteBase =
-    (typeof import.meta !== "undefined" &&
-      (import.meta as any).env &&
-      ((import.meta as any).env.VITE_API_BASE_URL as string)) ||
-    "";
-
-  const winBase =
-    (typeof window !== "undefined" && (window as any).VITE_API_BASE_URL) || "";
-
-  const base = viteBase || winBase || "https://ilungi-gestora-api-oox9.onrender.com";
+  // Usar variável de ambiente do Vite ou fallback para localhost
+  //const viteBase = import.meta.env.VITE_API_BASE_URL;
+  const base = "http://localhost:8080";
   return String(base || "").replace(/\/+$/, "");
 }
 
 const API_BASE = getApiBase();
 
+console.log('API Base URL:', API_BASE);
+
 // =================== AUTH TOKEN ===================
 let authToken: string | null = null;
 
+export enum UserRole {
+  ADMIN = 'ADMIN',
+  EMPLOYEE = 'EMPLOYEE',
+  MANAGER = 'MANAGER',
+  GUEST = 'GUEST'
+}
+
 export const setAuthToken = (token: string | null) => {
   authToken = token;
-  if (token) sessionStorage.setItem("gestora_api_token", token);
-  else sessionStorage.removeItem("gestora_api_token");
+  if (token) {
+    sessionStorage.setItem("gestora_api_token", token);
+  } else {
+    sessionStorage.removeItem("gestora_api_token");
+  }
 };
 
 export const getAuthToken = () => {
-  if (!authToken) authToken = sessionStorage.getItem("gestora_api_token");
+  if (!authToken) {
+    authToken = sessionStorage.getItem("gestora_api_token");
+  }
   return authToken;
 };
 
 const getHeaders = (): HeadersInit => {
-  const headers: HeadersInit = { "Content-Type": "application/json" };
+  const headers: HeadersInit = { 
+    "Content-Type": "application/json"
+  };
   const token = getAuthToken();
-  if (token) headers["Authorization"] = `Bearer ${token}`;
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
+  }
   return headers;
 };
 
 // =================== RESPONSE HANDLER ===================
-function generateTempPassword(): string {
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789@#$!';
-  let password = '';
-  const randomValues = new Uint32Array(12);
-  window.crypto.getRandomValues(randomValues);
-  for (let i = 0; i < 12; i++) {
-    password += chars[randomValues[i] % chars.length];
-  }
-  return password;
-}
-
 async function handleResponse(res: Response) {
   const contentType = res.headers.get("content-type") || "";
   const raw = await res.text();
 
   let data: any = raw;
-  if (raw && (contentType.includes("application/json") || raw.startsWith("{"))) {
-    try {
+  
+  try {
+    if (raw && (contentType.includes("application/json") || raw.startsWith("{"))) {
       data = JSON.parse(raw);
-    } catch {
-      data = raw;
     }
-  } else {
-    try {
-      data = raw ? JSON.parse(raw) : null;
-    } catch {
-      data = raw || null;
-    }
+  } catch {
+    // Se não for JSON válido, mantém como string
+    data = raw || null;
   }
 
   if (!res.ok) {
     const msg =
       (data && (data.message || data.error || data.detail)) ||
-      (typeof data === "string" ? data : "") ||
+      (typeof data === "string" && data) ||
       res.statusText ||
       `HTTP ${res.status}`;
 
-    console.error("API error", {
+    console.error("API Error:", {
       url: res.url,
       status: res.status,
       body: data,
@@ -96,17 +91,23 @@ async function handleResponse(res: Response) {
 
 // =================== AUTH ===================
 export const apiAuth = {
-  login: async (email: string, password?: string) => {
-    const response = await fetch(`${API_BASE}/auth/login`, {
+  login: async (email: string, password: string) => {
+    const url = `${API_BASE}/auth/login`;
+    console.log('Login URL:', url);
+    
+    const response = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password: password || "" }),
+      body: JSON.stringify({ email, password }),
     });
 
     const data = await handleResponse(response);
 
-    if (data?.token) setAuthToken(data.token);
-    else if (data?.jwt) setAuthToken(data.jwt);
+    if (data?.token) {
+      setAuthToken(data.token);
+    } else if (data?.jwt) {
+      setAuthToken(data.jwt);
+    }
 
     return data;
   },
@@ -116,14 +117,14 @@ export const apiAuth = {
     return { success: true };
   },
 
-  register: async (email: string, name: string, password?: string, phone?: string) => {
+  register: async (email: string, name: string, password: string, phone?: string) => {
     const response = await fetch(`${API_BASE}/auth/register`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ 
         email, 
         name, 
-        password: password || "",
+        password,
         phone: phone || ""
       }),
     });
@@ -137,29 +138,59 @@ export const apiAuth = {
   },
 
   getCurrentUser: async () => {
-    const res = await fetch(`${API_BASE}/auth/me`, { method: "GET", headers: getHeaders() });
-    if (res.status === 404 || res.status === 401) return null;
+    const res = await fetch(`${API_BASE}/auth/me`, { 
+      method: "GET", 
+      headers: getHeaders() 
+    });
+    
+    if (res.status === 404 || res.status === 401) {
+      return null;
+    }
+    
     return handleResponse(res);
   },
 };
 
-// =================== TASKS (USER) ===================
+// =================== TASKS ===================
 export const apiTasks = {
+  // Listar todas as tarefas (para admin)
   getAll: async () => {
-    const res = await fetch(`${API_BASE}/tasks`, { method: "GET", headers: getHeaders() });
+    const res = await fetch(`${API_BASE}/admin/tasks`, { 
+      method: "GET", 
+      headers: getHeaders() 
+    });
+    return handleResponse(res);
+  },
+
+  // Minhas tarefas
+  getMyTasks: async () => {
+    const res = await fetch(`${API_BASE}/tasks/my-tasks`, { 
+      method: "GET", 
+      headers: getHeaders() 
+    });
     return handleResponse(res);
   },
 
   getById: async (id: string) => {
-    const res = await fetch(`${API_BASE}/tasks/${id}`, { method: "GET", headers: getHeaders() });
+    const res = await fetch(`${API_BASE}/tasks/${id}`, { 
+      method: "GET", 
+      headers: getHeaders() 
+    });
     return handleResponse(res);
   },
 
+  // Criar tarefa (usuário comum cria para si mesmo)
   create: async (taskData: any) => {
-    const res = await fetch(`${API_BASE}/tasks`, {
+    // Se for admin, cria com múltiplos responsáveis
+    const res = await fetch(`${API_BASE}/admin/tasks`, {
       method: "POST",
       headers: getHeaders(),
-      body: JSON.stringify(taskData),
+      body: JSON.stringify({
+        title: taskData.title,
+        description: taskData.description,
+        daysToFinish: taskData.deadlineType === 'days' ? taskData.deadlineValue : Math.ceil(taskData.deadlineValue / 24),
+        responsibles: [taskData.responsibleId, ...(taskData.intervenientes || [])].map(id => Number(id))
+      }),
     });
     return handleResponse(res);
   },
@@ -174,7 +205,10 @@ export const apiTasks = {
   },
 
   delete: async (id: string) => {
-    const res = await fetch(`${API_BASE}/tasks/${id}`, { method: "DELETE", headers: getHeaders() });
+    const res = await fetch(`${API_BASE}/tasks/${id}`, { 
+      method: "DELETE", 
+      headers: getHeaders() 
+    });
     return handleResponse(res);
   },
 
@@ -187,15 +221,12 @@ export const apiTasks = {
     return handleResponse(res);
   },
 
-  // Minhas tarefas
-  getMyTasks: async () => {
-    const res = await fetch(`${API_BASE}/tasks/my-tasks`, { method: "GET", headers: getHeaders() });
-    return handleResponse(res);
-  },
-
   // Minhas estatísticas
   getMyStats: async () => {
-    const res = await fetch(`${API_BASE}/tasks/my-stats`, { method: "GET", headers: getHeaders() });
+    const res = await fetch(`${API_BASE}/tasks/my-stats`, { 
+      method: "GET", 
+      headers: getHeaders() 
+    });
     return handleResponse(res);
   },
 };
@@ -203,12 +234,18 @@ export const apiTasks = {
 // =================== ADMIN TASKS ===================
 export const apiAdminTasks = {
   getAll: async () => {
-    const res = await fetch(`${API_BASE}/admin/tasks`, { method: "GET", headers: getHeaders() });
+    const res = await fetch(`${API_BASE}/admin/tasks`, { 
+      method: "GET", 
+      headers: getHeaders() 
+    });
     return handleResponse(res);
   },
 
   getByUserId: async (userId: string) => {
-    const res = await fetch(`${API_BASE}/admin/tasks/user/${userId}`, { method: "GET", headers: getHeaders() });
+    const res = await fetch(`${API_BASE}/admin/tasks/user/${userId}`, { 
+      method: "GET", 
+      headers: getHeaders() 
+    });
     return handleResponse(res);
   },
 
@@ -216,23 +253,6 @@ export const apiAdminTasks = {
     const res = await fetch(`${API_BASE}/admin/tasks/${taskId}/assign/${userId}`, { 
       method: "POST", 
       headers: getHeaders() 
-    });
-    return handleResponse(res);
-  },
-
-  assignMultipleUsers: async (taskId: string, userIds: string[]) => {
-    const res = await fetch(`${API_BASE}/admin/tasks/${taskId}/assign-multiple`, {
-      method: "POST",
-      headers: getHeaders(),
-      body: JSON.stringify(userIds),
-    });
-    return handleResponse(res);
-  },
-
-  removeUser: async (taskId: string, userId: string) => {
-    const res = await fetch(`${API_BASE}/admin/tasks/${taskId}/assign/${userId}`, {
-      method: "DELETE",
-      headers: getHeaders(),
     });
     return handleResponse(res);
   },
@@ -256,23 +276,30 @@ export const apiAdminTasks = {
 // =================== ADMIN USERS ===================
 export const apiAdminUsers = {
   getAll: async () => {
-    const res = await fetch(`${API_BASE}/admin/users`, { method: "GET", headers: getHeaders() });
+    const res = await fetch(`${API_BASE}/admin/users`, { 
+      method: "GET", 
+      headers: getHeaders() 
+    });
     return handleResponse(res);
   },
 
   getById: async (id: string) => {
-    const res = await fetch(`${API_BASE}/admin/users/${id}`, { method: "GET", headers: getHeaders() });
+    const res = await fetch(`${API_BASE}/admin/users/${id}`, { 
+      method: "GET", 
+      headers: getHeaders() 
+    });
     return handleResponse(res);
   },
 
   getByRole: async (role: string) => {
-    const res = await fetch(`${API_BASE}/admin/users/by-role/${role}`, { method: "GET", headers: getHeaders() });
+    const res = await fetch(`${API_BASE}/admin/users/by-role/${role}`, { 
+      method: "GET", 
+      headers: getHeaders() 
+    });
     return handleResponse(res);
   },
 
-  create: async (data: { name: string; email: string; phone?: string; role?: string; tempPassword?: string }) => {
-    // O backend gera a senha automaticamente, não precisamos enviar
-    // Mas podemos enviar phone e role
+  create: async (data: { name: string; email: string; phone?: string; role?: string }) => {
     const response = await fetch(`${API_BASE}/admin/users`, {
       method: "POST",
       headers: getHeaders(),
@@ -296,7 +323,10 @@ export const apiAdminUsers = {
   },
 
   delete: async (id: string) => {
-    const res = await fetch(`${API_BASE}/admin/users/${id}`, { method: "DELETE", headers: getHeaders() });
+    const res = await fetch(`${API_BASE}/admin/users/${id}`, { 
+      method: "DELETE", 
+      headers: getHeaders() 
+    });
     return handleResponse(res);
   },
 
@@ -309,51 +339,93 @@ export const apiAdminUsers = {
   },
 };
 
-// =================== ADMIN STATS & DASHBOARD ===================
+// =================== ADMIN STATS ===================
 export const apiAdmin = {
   getStats: async () => {
-    const res = await fetch(`${API_BASE}/admin/stats`, { method: "GET", headers: getHeaders() });
+    const res = await fetch(`${API_BASE}/admin/stats`, { 
+      method: "GET", 
+      headers: getHeaders() 
+    });
     return handleResponse(res);
   },
 
   getDashboard: async () => {
-    const res = await fetch(`${API_BASE}/admin/dashboard`, { method: "GET", headers: getHeaders() });
+    const res = await fetch(`${API_BASE}/admin/dashboard`, { 
+      method: "GET", 
+      headers: getHeaders() 
+    });
     return handleResponse(res);
   },
 };
 
-// =================== USER SELF-SERVICE ===================
+// =================== USER PROFILE ===================
 export const apiUsers = {
-  getAll: async () => {
-    const res = await fetch(`${API_BASE}/admin/users`, { method: "GET", headers: getHeaders() });
+  // Método para buscar todos os usuários (com opções de paginação/filtro)
+  getAll: async (params?: {
+    page?: number;
+    limit?: number;
+    search?: string;
+    role?: string;
+    sortBy?: string;
+    order?: 'asc' | 'desc';
+  }) => {
+    // Construir query string a partir dos parâmetros
+    const queryParams = new URLSearchParams();
+    
+    if (params) {
+      if (params.page) queryParams.append('page', params.page.toString());
+      if (params.limit) queryParams.append('limit', params.limit.toString());
+      if (params.search) queryParams.append('search', params.search);
+      if (params.role) queryParams.append('role', params.role);
+      if (params.sortBy) queryParams.append('sortBy', params.sortBy);
+      if (params.order) queryParams.append('order', params.order);
+    }
+    
+    const queryString = queryParams.toString();
+    const url = queryString 
+      ? `${API_BASE}/users?${queryString}`
+      : `${API_BASE}/users`;
+    
+    const res = await fetch(url, {
+      method: "GET",
+      headers: getHeaders(),
+    });
+    
     return handleResponse(res);
   },
 
-  update: async (id: string, data: { name?: string; phone?: string; email?: string }) => {
+  // Alternativa mais simples (sem parâmetros)
+  getAllSimple: async () => {
+    const res = await fetch(`${API_BASE}/users`, {
+      method: "GET",
+      headers: getHeaders(),
+    });
+    
+    return handleResponse(res);
+  },
+
+  // Método para buscar um usuário específico por ID
+  getById: async (id: string) => {
     const res = await fetch(`${API_BASE}/users/${id}`, {
-      method: "PUT",
-      headers: getHeaders(),
-      body: JSON.stringify(data),
-    });
-    return handleResponse(res);
-  },
-
-  delete: async (id: string) => {
-    const res = await fetch(`${API_BASE}/users/${id}`, { method: "DELETE", headers: getHeaders() });
-    return handleResponse(res);
-  },
-
-  changeRole: async (id: string, role: string) => {
-    const res = await fetch(`${API_BASE}/users/${id}/role?role=${encodeURIComponent(role)}`, { 
-      method: "PATCH", 
+      method: "GET",
       headers: getHeaders(),
     });
+    
     return handleResponse(res);
   },
 
   updateProfile: async (id: string, data: { name?: string; phone?: string }) => {
     const res = await fetch(`${API_BASE}/users/${id}/profile`, {
       method: "PATCH",
+      headers: getHeaders(),
+      body: JSON.stringify(data),
+    });
+    return handleResponse(res);
+  },
+
+  update: async (id: string, data: { name?: string; email?: string }) => {
+    const res = await fetch(`${API_BASE}/users/${id}`, {
+      method: "PUT",
       headers: getHeaders(),
       body: JSON.stringify(data),
     });
@@ -368,20 +440,10 @@ export const apiUsers = {
     });
     return handleResponse(res);
   },
-
-  getByRole: async (role: string) => {
-    const res = await fetch(`${API_BASE}/users/by-role/${role}`, { method: "GET", headers: getHeaders() });
-    return handleResponse(res);
-  },
 };
 
 // =================== COMMENTS ===================
 export const apiComments = {
-  getByTaskId: async (taskId: string) => {
-    const res = await fetch(`${API_BASE}/tasks/${taskId}/comments`, { method: "GET", headers: getHeaders() });
-    return handleResponse(res);
-  },
-
   create: async (taskId: string, text: string) => {
     const res = await fetch(`${API_BASE}/tasks/${taskId}/comments`, {
       method: "POST",
@@ -391,91 +453,25 @@ export const apiComments = {
     return handleResponse(res);
   },
 
-  delete: async (taskId: string, commentId: string) => {
-    const res = await fetch(`${API_BASE}/tasks/${taskId}/comments/${commentId}`, {
-      method: "DELETE",
-      headers: getHeaders(),
+  getByTaskId: async (taskId: string) => {
+    const res = await fetch(`${API_BASE}/tasks/${taskId}/comments`, { 
+      method: "GET", 
+      headers: getHeaders() 
     });
     return handleResponse(res);
-  },
-};
-
-// =================== ACTIVITIES ===================
-export const apiActivities = {
-  getAll: async () => {
-    const res = await fetch(`${API_BASE}/activities`, { method: "GET", headers: getHeaders() });
-    return handleResponse(res);
-  },
-
-  getByTaskId: async (taskId: string) => {
-    const res = await fetch(`${API_BASE}/activities/task/${taskId}`, { method: "GET", headers: getHeaders() });
-    return handleResponse(res);
-  },
-};
-
-// =================== NOTIFICATIONS ===================
-export const apiNotifications = {
-  getAll: async () => {
-    const res = await fetch(`${API_BASE}/notifications`, { method: "GET", headers: getHeaders() });
-    return handleResponse(res);
-  },
-
-  markAsRead: async (id: string) => {
-    const res = await fetch(`${API_BASE}/notifications/${id}/read`, { method: "PATCH", headers: getHeaders() });
-    return handleResponse(res);
-  },
-};
-
-// =================== REPORTS ===================
-export const apiReports = {
-  getStats: async () => {
-    const res = await fetch(`${API_BASE}/reports/stats`, { method: "GET", headers: getHeaders() });
-    return handleResponse(res);
-  },
-
-  getUserPerformance: async () => {
-    const res = await fetch(`${API_BASE}/reports/user-performance`, { method: "GET", headers: getHeaders() });
-    return handleResponse(res);
-  },
-
-  getTaskStats: async () => {
-    const res = await fetch(`${API_BASE}/reports/task-stats`, { method: "GET", headers: getHeaders() });
-    return handleResponse(res);
-  },
-};
-
-// =================== HEALTH ===================
-export const apiHealth = {
-  ping: async () => {
-    const attempt = async (path: string) => {
-      const res = await fetch(`${API_BASE}${path}`, { method: "GET" });
-      if (!res.ok) {
-        const error: Error & { status?: number } = new Error(res.statusText);
-        error.status = res.status;
-        throw error;
-      }
-      return handleResponse(res);
-    };
-
-    try {
-      return await attempt("/actuator/health");
-    } catch (error: any) {
-      if (error?.status === 404 && !/\/api$/i.test(API_BASE)) {
-        return attempt("/api/actuator/health");
-      }
-      throw error;
-    }
   },
 };
 
 // =================== MAPPERS ===================
 export const mapUserFromAPI = (apiUser: any) => {
   return {
-    id: String(apiUser.id),
+    id: String(apiUser.id || apiUser.userId || ""),
     email: apiUser.email || "",
     name: apiUser.name || apiUser.username || "Utilizador",
     phone: apiUser.phone || null,
-    role: apiUser.role || "USER",
+    role: apiUser.role === "ADMIN" ? UserRole.ADMIN : UserRole.EMPLOYEE,
+    position: apiUser.position || apiUser.role || "",
+    department: apiUser.department || "",
     avatar: apiUser.avatar || null,
     mustChangePassword: apiUser.mustChangePassword ?? false,
     createdAt: apiUser.createdAt || new Date().toISOString(),
@@ -484,31 +480,60 @@ export const mapUserFromAPI = (apiUser: any) => {
 };
 
 export const mapTaskFromAPI = (apiTask: any) => {
+  // Converter status do backend para o frontend
+  const statusMap: Record<string, string> = {
+    'PENDENTE': 'ABERTO',
+    'EM_PROGRESSO': 'EM_PROGRESSO',
+    'TERMINADO': 'TERMINADO',
+    'FECHADO': 'FECHADO',
+    'ATRASADA': 'ATRASADA',
+    'ABERTO': 'ABERTO'
+  };
+
   return {
-    id: String(apiTask.id),
+    id: String(apiTask.id || ""),
     title: apiTask.title || "",
     description: apiTask.description || "",
-    status: apiTask.status || "PENDING",
+    status: statusMap[apiTask.status?.toUpperCase()] || "ABERTO",
     priority: apiTask.priority || "MEDIUM",
-    responsibleId: String(apiTask.responsibleId || apiTask.userId || ""),
-    responsibleName: apiTask.responsibleName || apiTask.userName || "",
-    deliveryDate: apiTask.deliveryDate || apiTask.dueDate || new Date().toISOString(),
-    startDate: apiTask.startDate || new Date().toISOString(),
-    intervenientes: Array.isArray(apiTask.intervenientes) ? apiTask.intervenientes : [],
-    comments: Array.isArray(apiTask.comments) ? apiTask.comments : [],
-    createdAt: apiTask.createdAt || new Date().toISOString(),
+    responsibleId: String(apiTask.responsibleId || (apiTask.responsibles && apiTask.responsibles[0]?.id) || ""),
+    responsibleName: apiTask.responsibleName || (apiTask.responsibles && apiTask.responsibles[0]?.name) || "",
+    deliveryDate: apiTask.endDate || apiTask.deliveryDate || new Date().toISOString(),
+    startDate: apiTask.createAt || apiTask.startDate || new Date().toISOString(),
+    intervenientes: Array.isArray(apiTask.responsibles) ? 
+      apiTask.responsibles.slice(1).map((r: any) => String(r.id)) : 
+      (apiTask.intervenientes || []),
+    comments: Array.isArray(apiTask.comments) ? apiTask.comments.map(mapCommentFromAPI) : [],
+    createdAt: apiTask.createdAt || apiTask.createAt || new Date().toISOString(),
     updatedAt: apiTask.updatedAt || new Date().toISOString(),
+    // Campos para formulário
+    deadlineValue: apiTask.daysToFinish || 1,
+    deadlineType: 'days' // Default para backend Spring
   };
 };
 
 export const mapCommentFromAPI = (apiComment: any) => {
   return {
-    id: String(apiComment.id),
-    userId: String(apiComment.userId || ""),
-    userName: apiComment.userName || "Utilizador",
+    id: String(apiComment.id || ""),
     text: apiComment.text || apiComment.content || "",
+    userId: String(apiComment.userId || apiComment.authorId || ""),
+    userName: apiComment.userName || apiComment.authorName || "Anônimo",
     timestamp: apiComment.timestamp || apiComment.createdAt || new Date().toISOString(),
+    taskId: String(apiComment.taskId || "")
   };
+};
+
+// =================== HEALTH CHECK ===================
+export const apiHealth = {
+  ping: async () => {
+    try {
+      const res = await fetch(`${API_BASE}/actuator/health`, { method: "GET" });
+      return handleResponse(res);
+    } catch (error) {
+      console.error("Health check failed:", error);
+      throw error;
+    }
+  },
 };
 
 // =================== DEFAULT EXPORT ===================
@@ -517,11 +542,8 @@ export default {
   apiTasks,
   apiUsers,
   apiComments,
-  apiActivities,
-  apiNotifications,
-  apiReports,
-  apiHealth,
   apiAdminUsers,
   apiAdminTasks,
   apiAdmin,
+  apiHealth,
 };

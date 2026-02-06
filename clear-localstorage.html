@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Clear Gestora localStorage</title>
+  <style>body{font-family:system-ui,Segoe UI,Arial;padding:16px}button{padding:8px 12px}</style>
+</head>
+<body>
+  <h2>Apagar dados locais do Gestora</h2>
+  <p>Este utilitário remove as chaves do <strong>localStorage</strong> relacionadas à aplicação.</p>
+  <button id="clear">Apagar chaves locais</button>
+  <button id="clearAll">Apagar todo o localStorage</button>
+  <pre id="out" style="white-space:pre-wrap;margin-top:12px;border:1px solid #ddd;padding:8px;background:#f9f9f9"></pre>
+
+  <script>
+    function out(msg){document.getElementById('out').textContent += msg + '\n';}
+
+    // Detecta chaves relacionadas ao projecto
+    const keys = Object.keys(localStorage).filter(k => k.startsWith('gestora_') || k.includes('gestora'));
+
+    document.getElementById('clear').addEventListener('click', () => {
+      if (!confirm('Apagar ' + keys.length + ' chaves relacionadas ao Gestora?')) return;
+      keys.forEach(k => { localStorage.removeItem(k); out('Removido: ' + k); });
+      out('Concluído.');
+    });
+
+    document.getElementById('clearAll').addEventListener('click', () => {
+      if (!confirm('Apagar TODO o localStorage (permanente)?')) return;
+      localStorage.clear();
+      out('localStorage completamente limpo.');
+    });
+  </script>
+
+  <hr />
+  <p>Ou cole este snippet na consola do navegador (mais rápido):</p>
+  <pre>const keys = Object.keys(localStorage).filter(k =&gt; k.startsWith('gestora_') || k.includes('gestora')); keys.forEach(k =&gt; localStorage.removeItem(k)); console.log('Removidas', keys.length, 'chaves');</pre>
+</body>
+</html>

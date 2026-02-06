@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
   User, 
@@ -139,11 +138,48 @@ export default function App() {
     const savedTasks: Task[] = [];
     const savedUsers: User[] = [];
     const savedActivitiesRaw: SystemActivity[] = [];
-    
-    // Limpar localStorage de dados antigos
-    localStorage.removeItem('gestora_tasks');
-    localStorage.removeItem('gestora_users');
-    
+
+    // Limpeza agressiva de dados locais relacionados à aplicação.
+    // Mantemos o token em sessionStorage para permitir carregar dados da API.
+    try {
+      if (typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
+        const toRemove = Object.keys(localStorage).filter(k => k.startsWith('gestora_') || k.includes('gestora'));
+        toRemove.forEach(k => { localStorage.removeItem(k); });
+        // remoção adicional para padrões de avatar
+        Object.keys(localStorage).filter(k => k.startsWith('gestora_avatar_')).forEach(k => localStorage.removeItem(k));
+        // remover chaves específicas conhecidas
+        localStorage.removeItem('gestora_tasks');
+        localStorage.removeItem('gestora_users');
+        localStorage.removeItem('gestora_activities');
+        localStorage.removeItem('gestora_remember_email');
+      }
+
+      // Tentar limpar bases de dados IndexedDB que contenham 'gestora' no nome
+      if (typeof indexedDB !== 'undefined') {
+        (async () => {
+          try {
+            // indexedDB.databases() é suportado em navegadores modernos
+            if ((indexedDB as any).databases) {
+              const dbs = await (indexedDB as any).databases();
+              dbs.forEach((db: any) => {
+                if (db && db.name && db.name.includes('gestora')) {
+                  try { indexedDB.deleteDatabase(db.name); } catch (e) { /* ignore */ }
+                }
+              });
+            } else {
+              // fallback: tentativa de apagar nomes comuns
+              try { indexedDB.deleteDatabase('gestora'); } catch (e) { /* ignore */ }
+              try { indexedDB.deleteDatabase('gestora-db'); } catch (e) { /* ignore */ }
+            }
+          } catch (err) {
+            console.warn('Falha ao limpar IndexedDB:', err);
+          }
+        })();
+      }
+    } catch (err) {
+      console.warn('Erro durante limpeza localStorage/indexedDB:', err);
+    }
+
     const dedupeActivities = (list: SystemActivity[]) => {
       const seen = new Set<string>();
       return list.filter(a => {
@@ -204,6 +240,7 @@ export default function App() {
             setView('app');
           }
         } catch (error) {
+          console.error('Erro ao carregar usuário:', error);
           setAuthToken(null);
           setUser(null);
           setView('login');
@@ -217,7 +254,6 @@ export default function App() {
     setView('login');
   }, []);
 
-
   const filterTasksForUser = (list: Task[], u?: User | null) => {
     if (!u || u.role !== UserRole.EMPLOYEE) return list;
     return list.filter(t => t.responsibleId === u.id || t.intervenientes?.includes(u.id));
@@ -227,6 +263,10 @@ export default function App() {
     try {
       const activeUser = currentUser ?? user;
       const isAdmin = activeUser?.role === UserRole.ADMIN;
+      
+      console.log('Carregando dados da API para:', activeUser?.name, 'Admin:', isAdmin);
+      
+      // Carregar tarefas
       const tasksResponse = isAdmin ? await apiTasks.getAll() : await apiTasks.getMyTasks();
       if (tasksResponse) {
         const tasksList = Array.isArray(tasksResponse) ? tasksResponse : (tasksResponse.data || tasksResponse.tasks || []);
@@ -234,6 +274,7 @@ export default function App() {
         if (mappedTasks.length > 0) {
           const filtered = filterTasksForUser(mappedTasks, activeUser);
           saveTasks(filtered);
+          console.log('Tarefas carregadas:', mappedTasks.length);
           logger.debug('API', 'Tarefas carregadas da API com sucesso', mappedTasks.length);
         } else {
           saveTasks([]);
@@ -242,6 +283,7 @@ export default function App() {
         saveTasks([]);
       }
     } catch (error) {
+      console.error('Erro ao carregar tarefas:', error);
       logger.debug('API', 'Não foi possível carregar tarefas da API', error);
       saveTasks([]);
     }
@@ -255,6 +297,7 @@ export default function App() {
           const mappedUsers = usersList.map((u: any) => mapUserFromAPI(u));
           if (mappedUsers.length > 0) {
             saveUsers(mappedUsers);
+            console.log('Usuários carregados:', mappedUsers.length);
             logger.debug('API', 'Utilizadores carregados da API com sucesso', mappedUsers.length);
           } else {
             saveUsers([]);
@@ -263,6 +306,7 @@ export default function App() {
           saveUsers([]);
         }
       } catch (error) {
+        console.error('Erro ao carregar usuários:', error);
         logger.debug('API', 'Não foi possível carregar utilizadores da API', error);
         saveUsers([]);
       }
@@ -318,7 +362,9 @@ export default function App() {
       await apiTasks.delete(task.id);
       saveTasks(tasks.filter(t => t.id !== task.id));
       addSystemActivity({ userId: user!.id, userName: user!.name, action: 'deleted', entityType: 'task', entityId: task.id, entityTitle: task.title });
+      addNotification(user!.id, `Tarefa "${task.title}" eliminada com sucesso.`, 'success');
     } catch (apiError) {
+      console.error('Erro ao deletar tarefa:', apiError);
       logger.warn('Task', 'Erro ao deletar na API', apiError);
       addNotification(user!.id, 'Não foi possível eliminar a tarefa na API.', 'error');
     }
@@ -338,6 +384,7 @@ export default function App() {
       addNotification(user!.id, `Utilizador ${userToDelete.name} eliminado com sucesso.`, 'success');
       saveUsers(users.filter(u => u.id !== userId));
     } catch (apiError) {
+      console.error('Erro ao deletar usuário:', apiError);
       logger.warn('User', 'Erro ao eliminar na API', apiError);
       addNotification(user!.id, `Não foi possível eliminar ${userToDelete.name} na API.`, 'error');
     }
@@ -359,40 +406,61 @@ export default function App() {
     const currentIndex = StatusOrder.indexOf(task.status);
     const nextStatus = StatusOrder[currentIndex + 1];
     if (!nextStatus) return;
+    
     const isTaskMember = task.responsibleId === user?.id || task.intervenientes?.includes(user?.id as string);
     if (user?.role === UserRole.EMPLOYEE && !isTaskMember) return;
     if (task.status === TaskStatus.TERMINADO && user?.role !== UserRole.ADMIN) return;
 
     try {
-      const response = await apiTasks.updateStatus(task.id, nextStatus);
+      // Converter status do frontend para backend
+      const statusMap: Record<string, string> = {
+        'ABERTO': 'PENDENTE',
+        'EM_PROGRESSO': 'EM_PROGRESSO',
+        'TERMINADO': 'TERMINADO',
+        'FECHADO': 'FECHADO',
+        'ATRASADA': 'ATRASADA'
+      };
+      
+      const backendStatus = statusMap[nextStatus] || 'PENDENTE';
+      const response = await apiTasks.updateStatus(task.id, backendStatus);
+      
       const updatedTask = response ? mapTaskFromAPI(response) : { 
         ...task, 
         status: nextStatus, 
         updatedAt: new Date().toISOString(),
         closedAt: nextStatus === TaskStatus.FECHADO ? new Date().toISOString() : task.closedAt
       };
+      
       const nextTasks = tasks.map(tk => tk.id === task.id ? { ...tk, ...updatedTask } : tk);
       saveTasks(nextTasks);
+      
       if (user?.role === UserRole.EMPLOYEE) {
         try {
-          const commentResponse = await apiComments.create(task.id, `Avançou o estado para ${nextStatus}`);
-          if (commentResponse && commentResponse.id) {
-            const mappedComment = mapCommentFromAPI(commentResponse);
-            saveTasks(nextTasks.map(tk => tk.id === task.id ? { ...tk, comments: [...(tk.comments || []), mappedComment] } : tk));
-          }
+          await apiComments.create(task.id, `Avançou o estado para ${nextStatus}`);
         } catch (commentError) {
           logger.warn('Comment', 'Erro ao criar comentário automático na API', commentError);
         }
       }
+      
+      addSystemActivity({ 
+        userId: user!.id, 
+        userName: user!.name, 
+        action: 'status_changed', 
+        entityType: 'task', 
+        entityId: task.id, 
+        entityTitle: task.title, 
+        fromStatus: task.status, 
+        toStatus: nextStatus 
+      });
+      
+      const aiMsg = await getSmartNotification(task.title, nextStatus, false, false, lang);
+      addNotification(task.responsibleId, aiMsg, nextStatus === TaskStatus.TERMINADO ? 'success' : 'info');
+      
     } catch (error) {
+      console.error('Erro ao atualizar status:', error);
       logger.warn('Task', 'Erro ao atualizar status na API', error);
       addNotification(user!.id, 'Não foi possível atualizar o estado na API.', 'error');
-      return;
     }
-    
-    addSystemActivity({ userId: user!.id, userName: user!.name, action: 'status_changed', entityType: 'task', entityId: task.id, entityTitle: task.title, fromStatus: task.status, toStatus: nextStatus });
-    const aiMsg = await getSmartNotification(task.title, nextStatus, false, false, lang);
-    addNotification(task.responsibleId, aiMsg, nextStatus === TaskStatus.TERMINADO ? 'success' : 'info');
   };
 
   const addNotification = async (userId: string, message: string, type: 'info' | 'success' | 'error' = 'info') => {
@@ -445,6 +513,7 @@ export default function App() {
     if (typeof localStorage === 'undefined') return null;
     return localStorage.getItem(`gestora_avatar_${u.id}`);
   };
+  
   const saveAvatar = (userId: string, dataUrl: string) => {
     localStorage.setItem(`gestora_avatar_${userId}`, dataUrl);
     setUsers(prev => prev.map(u => u.id === userId ? { ...u, avatar: dataUrl } : u));
@@ -471,563 +540,528 @@ export default function App() {
     completed: tasks.filter(t => t.status === TaskStatus.FECHADO).length
   }), [tasks]);
 
-const LoginPage = () => {
-  const [isLoading, setIsLoading] = useState(false);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [rememberMe, setRememberMe] = useState(false);
-  const [showForgotPassword, setShowForgotPassword] = useState(false);
-  const [showRegister, setShowRegister] = useState(false);
-  const [forgotPasswordEmail, setForgotPasswordEmail] = useState('');
-  const [forgotPasswordMessage, setForgotPasswordMessage] = useState<string | null>(null);
-  const [registerData, setRegisterData] = useState({
-    name: '',
-    email: '',
-    password: '',
-    confirmPassword: ''
-  });
-  const [registerError, setRegisterError] = useState<string | null>(null);
-  const [registerSuccess, setRegisterSuccess] = useState(false);
-  const [formData, setFormData] = useState({
-    email: '',
-    password: ''
-  });
+  const LoginPage = () => {
+    const [isLoading, setIsLoading] = useState(false);
+    const [errorMessage, setErrorMessage] = useState<string | null>(null);
+    const [rememberMe, setRememberMe] = useState(false);
+    const [showForgotPassword, setShowForgotPassword] = useState(false);
+    const [showRegister, setShowRegister] = useState(false);
+    const [forgotPasswordEmail, setForgotPasswordEmail] = useState('');
+    const [forgotPasswordMessage, setForgotPasswordMessage] = useState<string | null>(null);
+    const [registerData, setRegisterData] = useState({
+      name: '',
+      email: '',
+      password: '',
+      confirmPassword: ''
+    });
+    const [registerError, setRegisterError] = useState<string | null>(null);
+    const [registerSuccess, setRegisterSuccess] = useState(false);
+    const [formData, setFormData] = useState({
+      email: '',
+      password: ''
+    });
 
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const { name, value } = e.target;
-    setFormData(prev => ({
-      ...prev,
-      [name]: value
-    }));
-    // Limpar erro quando o usuário começar a digitar
-    if (errorMessage) setErrorMessage(null);
-  };
+    const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+      const { name, value } = e.target;
+      setFormData(prev => ({
+        ...prev,
+        [name]: value
+      }));
+      if (errorMessage) setErrorMessage(null);
+    };
 
-  // Handler para "Lembrar-me"
-  const handleRememberMeChange = () => {
-    setRememberMe(!rememberMe);
-    if (!rememberMe) {
-      // Salvar email no localStorage quando ativar
-      localStorage.setItem('gestora_remember_email', formData.email);
-    } else {
-      localStorage.removeItem('gestora_remember_email');
-    }
-  };
-
-  // Handler para "Esqueceu a senha?"
-  const handleForgotPassword = async () => {
-    if (!forgotPasswordEmail) {
-      setForgotPasswordMessage('Por favor, insira o seu email.');
-      return;
-    }
-    
-    // Simular envio de email de recuperação
-    setForgotPasswordMessage(`Um email de recuperação foi enviado para ${forgotPasswordEmail}`);
-    // Nota: Implementar com a API quando disponível
-    setTimeout(() => {
-      setShowForgotPassword(false);
-      setForgotPasswordEmail('');
-      setForgotPasswordMessage(null);
-    }, 3000);
-  };
-
-  // Handler para registo de novo utilizador
-  const handleRegister = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setRegisterError(null);
-    
-    // Validações
-    if (!registerData.name.trim()) {
-      setRegisterError('Por favor, preencha o nome.');
-      return;
-    }
-    
-    if (!registerData.email.trim()) {
-      setRegisterError('Por favor, preencha o email.');
-      return;
-    }
-    
-    if (!registerData.password || registerData.password.length < 6) {
-      setRegisterError('A senha deve ter pelo menos 6 caracteres.');
-      return;
-    }
-    
-    if (registerData.password !== registerData.confirmPassword) {
-      setRegisterError('As senhas não coincidem.');
-      return;
-    }
-    
-    setIsLoading(true);
-    
-    try {
-      // Usar o endpoint de registo da API
-      const response = await apiAuth.register(registerData.email, registerData.name, registerData.password);
-      
-      setRegisterSuccess(true);
-      
-      // Após registo, fazer login automaticamente
-      setTimeout(async () => {
-        try {
-          const loginResponse = await apiAuth.login(registerData.email, registerData.password);
-          const token = loginResponse.token || loginResponse.jwt;
-          if (token) {
-            setAuthToken(token);
-            const apiUser = loginResponse.user || loginResponse;
-            const normalizedUser = {
-              ...apiUser,
-              id: apiUser?.id ?? apiUser?.userId,
-              email: apiUser?.email ?? registerData.email,
-              name: apiUser?.name ?? apiUser?.username ?? registerData.name,
-              role: apiUser?.role ?? UserRole.EMPLOYEE
-            };
-            const mappedUser = mapUserFromAPI(normalizedUser);
-            setUser(mappedUser);
-            setShowRegister(false);
-            setView('app');
-            await loadDataFromAPI(mappedUser);
-          }
-        } catch (loginError) {
-          // Se falhar login automático, mostra mensagem de sucesso e pede para fazer login
-          setRegisterSuccess(true);
-          setRegisterError(null);
-        }
-      }, 2000);
-      
-    } catch (error: any) {
-      setRegisterError(error.message || 'Erro ao criar conta. Tente novamente.');
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  // Handler para alterar dados do formulário de registo
-  const handleRegisterInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const { name, value } = e.target;
-    setRegisterData(prev => ({ ...prev, [name]: value }));
-    if (registerError) setRegisterError(null);
-  };
-
-  // Carregar email salvo ao iniciar (se remember-me estava ativo)
-  useEffect(() => {
-    const savedEmail = localStorage.getItem('gestora_remember_email');
-    if (savedEmail) {
-      setFormData(prev => ({ ...prev, email: savedEmail }));
-      setRememberMe(true);
-    }
-  }, []);
-
-  const validateForm = () => {
-    if (!formData.email.trim()) {
-      setErrorMessage('Por favor, preencha o campo de email.');
-      return false;
-    }
-    
-    if (!formData.password.trim()) {
-      setErrorMessage('Por favor, preencha o campo de senha.');
-      return false;
-    }
-    
-    // Validação básica de email
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(formData.email)) {
-      setErrorMessage('Por favor, insira um email válido.');
-      return false;
-    }
-    
-    return true;
-  };
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setErrorMessage(null);
-    
-    // Validação do formulário
-    if (!validateForm()) return;
-    
-    setIsLoading(true);
-    
-    try {
-      // Login com a API
-      const apiResponse = await apiAuth.login(formData.email, formData.password);
-      const token = apiResponse.token || apiResponse.jwt;
-
-      if (!token) {
-        throw new Error('Resposta de login sem token.');
-      }
-
-      setAuthToken(token);
-      const apiUser = apiResponse.user || apiResponse;
-      const normalizedUser = {
-        ...apiUser,
-        id: apiUser?.id ?? apiUser?.userId,
-        email: apiUser?.email ?? formData.email,
-        name: apiUser?.name ?? apiUser?.username,
-        role: apiUser?.role ?? UserRole.EMPLOYEE
-      };
-      const mappedUser = mapUserFromAPI(normalizedUser);
-      setUser(mappedUser);
-      
-      // Sempre carregar dados da API após login
-      await loadDataFromAPI(mappedUser);
-      
-      if (mappedUser.mustChangePassword) {
-        setView('app');
-        setActiveTab('profile');
+    const handleRememberMeChange = () => {
+      setRememberMe(!rememberMe);
+      if (!rememberMe) {
+        localStorage.setItem('gestora_remember_email', formData.email);
       } else {
-        setView('app');
+        localStorage.removeItem('gestora_remember_email');
       }
-    } catch (apiError: any) {
-      logger.error('Auth', 'Login na API falhou', apiError);
-      setAuthToken(null);
-      setUser(null);
-      setErrorMessage(getAuthErrorMessage(apiError));
-    } finally {
-      setIsLoading(false);
-    }
-  };
+    };
 
-  return (
-    <div className="min-h-screen bg-slate-100 flex items-center justify-center p-4 sm:p-6 font-sans">
-      <div className="w-full max-w-md">
-        {/* Logo e título */}
-        <div className="text-center mb-8 sm:mb-10">
-          <div className="inline-flex p-3 sm:p-4 bg-emerald-500 rounded-2xl shadow-lg mb-4 sm:mb-6">
-            <Workflow size={28} className="sm:w-9 sm:h-9 text-white" />
+    const handleForgotPassword = async () => {
+      if (!forgotPasswordEmail) {
+        setForgotPasswordMessage('Por favor, insira o seu email.');
+        return;
+      }
+      
+      setForgotPasswordMessage(`Um email de recuperação foi enviado para ${forgotPasswordEmail}`);
+      setTimeout(() => {
+        setShowForgotPassword(false);
+        setForgotPasswordEmail('');
+        setForgotPasswordMessage(null);
+      }, 3000);
+    };
+
+    const handleRegister = async (e: React.FormEvent) => {
+      e.preventDefault();
+      setRegisterError(null);
+      
+      if (!registerData.name.trim()) {
+        setRegisterError('Por favor, preencha o nome.');
+        return;
+      }
+      
+      if (!registerData.email.trim()) {
+        setRegisterError('Por favor, preencha o email.');
+        return;
+      }
+      
+      if (!registerData.password || registerData.password.length < 6) {
+        setRegisterError('A senha deve ter pelo menos 6 caracteres.');
+        return;
+      }
+      
+      if (registerData.password !== registerData.confirmPassword) {
+        setRegisterError('As senhas não coincidem.');
+        return;
+      }
+      
+      setIsLoading(true);
+      
+      try {
+        const response = await apiAuth.register(registerData.email, registerData.name, registerData.password);
+        
+        setRegisterSuccess(true);
+        
+        setTimeout(async () => {
+          try {
+            const loginResponse = await apiAuth.login(registerData.email, registerData.password);
+            const token = loginResponse.token || loginResponse.jwt;
+            if (token) {
+              setAuthToken(token);
+              const apiUser = loginResponse.user || loginResponse;
+              const normalizedUser = {
+                ...apiUser,
+                id: apiUser?.id ?? apiUser?.userId,
+                email: apiUser?.email ?? registerData.email,
+                name: apiUser?.name ?? apiUser?.username ?? registerData.name,
+                role: apiUser?.role ?? UserRole.EMPLOYEE
+              };
+              const mappedUser = mapUserFromAPI(normalizedUser);
+              setUser(mappedUser);
+              setShowRegister(false);
+              setView('app');
+              await loadDataFromAPI(mappedUser);
+            }
+          } catch (loginError) {
+            setRegisterSuccess(true);
+            setRegisterError(null);
+          }
+        }, 2000);
+        
+      } catch (error: any) {
+        setRegisterError(error.message || 'Erro ao criar conta. Tente novamente.');
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    const handleRegisterInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+      const { name, value } = e.target;
+      setRegisterData(prev => ({ ...prev, [name]: value }));
+      if (registerError) setRegisterError(null);
+    };
+
+    useEffect(() => {
+      const savedEmail = localStorage.getItem('gestora_remember_email');
+      if (savedEmail) {
+        setFormData(prev => ({ ...prev, email: savedEmail }));
+        setRememberMe(true);
+      }
+    }, []);
+
+    const validateForm = () => {
+      if (!formData.email.trim()) {
+        setErrorMessage('Por favor, preencha o campo de email.');
+        return false;
+      }
+      
+      if (!formData.password.trim()) {
+        setErrorMessage('Por favor, preencha o campo de senha.');
+        return false;
+      }
+      
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(formData.email)) {
+        setErrorMessage('Por favor, insira um email válido.');
+        return false;
+      }
+      
+      return true;
+    };
+
+    const handleSubmit = async (e: React.FormEvent) => {
+      e.preventDefault();
+      setErrorMessage(null);
+      
+      if (!validateForm()) return;
+      
+      setIsLoading(true);
+      
+      try {
+        const apiResponse = await apiAuth.login(formData.email, formData.password);
+        const token = apiResponse.token || apiResponse.jwt;
+
+        if (!token) {
+          throw new Error('Resposta de login sem token.');
+        }
+
+        setAuthToken(token);
+        const apiUser = apiResponse.user || apiResponse;
+        const normalizedUser = {
+          ...apiUser,
+          id: apiUser?.id ?? apiUser?.userId,
+          email: apiUser?.email ?? formData.email,
+          name: apiUser?.name ?? apiUser?.username,
+          role: apiUser?.role ?? UserRole.EMPLOYEE
+        };
+        const mappedUser = mapUserFromAPI(normalizedUser);
+        setUser(mappedUser);
+        
+        await loadDataFromAPI(mappedUser);
+        
+        if (mappedUser.mustChangePassword) {
+          setView('app');
+          setActiveTab('profile');
+        } else {
+          setView('app');
+        }
+      } catch (apiError: any) {
+        console.error('Erro no login:', apiError);
+        logger.error('Auth', 'Login na API falhou', apiError);
+        setAuthToken(null);
+        setUser(null);
+        setErrorMessage(getAuthErrorMessage(apiError));
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    return (
+      <div className="min-h-screen bg-slate-100 flex items-center justify-center p-4 sm:p-6 font-sans">
+        <div className="w-full max-w-md">
+          <div className="text-center mb-8 sm:mb-10">
+            <div className="inline-flex p-3 sm:p-4 bg-emerald-500 rounded-2xl shadow-lg mb-4 sm:mb-6">
+              <Workflow size={28} className="sm:w-9 sm:h-9 text-white" />
+            </div>
+            <h1 className="text-2xl sm:text-3xl font-black text-slate-900 tracking-tight mb-2">GESTORA</h1>
+            <p className="text-xs sm:text-sm text-slate-500 font-medium">Professional Workflow Management</p>
           </div>
-          <h1 className="text-2xl sm:text-3xl font-black text-slate-900 tracking-tight mb-2">GESTORA</h1>
-          <p className="text-xs sm:text-sm text-slate-500 font-medium">Professional Workflow Management</p>
-        </div>
 
-        {/* Card de login */}
-        <div className="bg-white rounded-2xl sm:rounded-3xl p-6 sm:p-8 shadow-lg border border-slate-200">
-          <h2 className="text-lg sm:text-xl font-bold text-slate-900 mb-2">Acesso ao Sistema</h2>
-          <p className="text-slate-500 text-xs sm:text-sm mb-6 sm:mb-8">
-            Entre com suas credenciais corporativas</p>
-            <div className="text-[10px] text-slate-600 mt-2 space-y-1">
-              <div className="flex items-center gap-1">
-                <ShieldCheck size={12} className="text-emerald-600" />
-                 <UserIcon size={12} className="text-blue-600" />
-              </div>
-            </div>
-          
+          <div className="bg-white rounded-2xl sm:rounded-3xl p-6 sm:p-8 shadow-lg border border-slate-200">
+            <h2 className="text-lg sm:text-xl font-bold text-slate-900 mb-2">Acesso ao Sistema</h2>
+            <p className="text-slate-500 text-xs sm:text-sm mb-6 sm:mb-8">
+              Entre com suas credenciais corporativas</p>
 
-          {/* Mensagem de erro */}
-          {errorMessage && (
-            <div className="mb-6 p-3 bg-rose-50 border border-rose-200 rounded-lg">
-              <div className="flex items-start gap-2">
-                <AlertTriangle className="text-rose-500 mt-0.5 flex-shrink-0" size={16} />
-                <p className="text-rose-700 text-sm">{errorMessage}</p>
-              </div>
-            </div>
-          )}
-
-          <form className="space-y-4 sm:space-y-6" onSubmit={handleSubmit}>
-            {/* Campo Email */}
-            <div className="space-y-1.5">
-              <label className="text-sm font-medium text-slate-700">
-                Email Corporativo <span className="text-rose-500">*</span>
-              </label>
-              <div className="relative">
-                <input
-                  name="email"
-                  type="email"
-                  value={formData.email}
-                  onChange={handleInputChange}
-                  placeholder="nome@empresa.com"
-                  className={`w-full pl-10 pr-4 py-2.5 sm:py-3 bg-white border ${
-                    errorMessage && !formData.email 
-                      ? 'border-rose-300 focus:border-rose-500' 
-                      : 'border-slate-300 focus:border-emerald-500'
-                  } rounded-xl focus:ring-2 focus:ring-emerald-500/20 text-slate-900 outline-none transition-all text-sm`}
-                  disabled={isLoading}
-                  required
-                />
-                <Mail className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-              </div>
-            </div>
-
-            {/* Campo Senha */}
-            <div className="space-y-1.5">
-              <label className="text-sm font-medium text-slate-700">
-                Senha <span className="text-rose-500">*</span>
-              </label>
-              <div className="relative">
-                <input
-                  name="password"
-                  type="password"
-                  value={formData.password}
-                  onChange={handleInputChange}
-                  placeholder="Digite sua senha"
-                  className={`w-full pl-10 pr-4 py-2.5 sm:py-3 bg-white border ${
-                    errorMessage && !formData.password 
-                      ? 'border-rose-300 focus:border-rose-500' 
-                      : 'border-slate-300 focus:border-emerald-500'
-                  } rounded-xl focus:ring-2 focus:ring-emerald-500/20 text-slate-900 outline-none transition-all text-sm`}
-                  disabled={isLoading}
-                  required
-                />
-                <Lock className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-              </div>
-            </div>
-
-            {/* Opções de login */}
-            <div className="flex items-center justify-between">
-              <label className="flex items-center space-x-2 cursor-pointer">
-                <input 
-                  type="checkbox" 
-                  checked={rememberMe}
-                  onChange={handleRememberMeChange}
-                  className="w-4 h-4 text-emerald-500 rounded border-slate-300 focus:ring-emerald-500/20" 
-                  disabled={isLoading}
-                />
-                <span className="text-sm text-slate-600">Lembrar-me</span>
-              </label>
-              <button 
-                type="button" 
-                onClick={() => setShowForgotPassword(true)}
-                className="text-sm text-emerald-600 hover:text-emerald-700 font-medium disabled:text-slate-400"
-                disabled={isLoading}
-              >
-                Esqueceu a senha?
-              </button>
-            </div>
-
-            {/* Botão de login */}
-            <button
-              type="submit"
-              disabled={isLoading}
-              className="w-full py-3 sm:py-3.5 bg-emerald-500 hover:bg-emerald-600 disabled:bg-emerald-400 text-white font-bold rounded-xl transition-colors shadow-md hover:shadow-lg disabled:cursor-not-allowed flex items-center justify-center gap-2"
-            >
-              {isLoading ? (
-                <>
-                  <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                  Autenticando...
-                </>
-              ) : (
-                'Entrar no Sistema'
-              )}
-            </button>
-          </form>
-
-          {/* Link para registar */}
-          <div className="mt-6 sm:mt-8 pt-4 sm:pt-6 border-t border-slate-100 text-center">
-            <p className="text-sm text-slate-500">
-              Não tem uma conta?
-            </p>
-            <button
-              onClick={() => setShowRegister(true)}
-              disabled={isLoading}
-              className="text-sm text-emerald-600 hover:text-emerald-700 font-medium disabled:text-slate-400 transition-colors flex items-center justify-center gap-2 mx-auto mt-2"
-            >
-              <UserPlus size={16} />
-              Criar conta
-            </button>
-          </div>
-
-          {/* Link para voltar */}
-          <div className="mt-6 sm:mt-8 pt-4 sm:pt-6 border-t border-slate-100 text-center">
-            <button
-              onClick={() => setView('landing')}
-              disabled={isLoading}
-              className="text-sm text-slate-500 hover:text-slate-700 disabled:text-slate-400 transition-colors flex items-center justify-center gap-2 mx-auto"
-            >
-              <ChevronLeft size={16} />
-              Voltar para o início
-            </button>
-          </div>
-        </div>
-
-        {/* Rodapé */}
-        <div className="mt-6 sm:mt-8 text-center">
-          <p className="text-xs text-slate-400">
-            © 2026 GESTORA • Sistema de Gestão de Tarefas
-          </p>
-          <p className="text-[10px] text-slate-400 mt-1">
-            Suporte: suporte@gestora.com
-          </p>
-        </div>
-      </div>
-
-      {/* Modal de Recuperação de Senha */}
-      {showForgotPassword && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl p-6 sm:p-8 max-w-md w-full shadow-2xl">
-            <div className="flex items-center justify-between mb-6">
-              <h3 className="text-lg font-bold text-slate-900">Recuperar Senha</h3>
-              <button 
-                onClick={() => setShowForgotPassword(false)}
-                className="text-slate-400 hover:text-slate-600"
-              >
-                <X size={24} />
-              </button>
-            </div>
-            
-            <p className="text-sm text-slate-600 mb-6">
-              Digite o seu email para receber um link de recuperação de senha.
-            </p>
-            
-            {forgotPasswordMessage && (
-              <div className={`mb-4 p-3 rounded-lg text-sm ${
-                forgotPasswordMessage.includes('enviado') 
-                  ? 'bg-emerald-50 text-emerald-700' 
-                  : 'bg-rose-50 text-rose-700'
-              }`}>
-                {forgotPasswordMessage}
+            {errorMessage && (
+              <div className="mb-6 p-3 bg-rose-50 border border-rose-200 rounded-lg">
+                <div className="flex items-start gap-2">
+                  <AlertTriangle className="text-rose-500 mt-0.5 flex-shrink-0" size={16} />
+                  <p className="text-rose-700 text-sm">{errorMessage}</p>
+                </div>
               </div>
             )}
-            
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1.5">
-                  Email
+
+            <form className="space-y-4 sm:space-y-6" onSubmit={handleSubmit}>
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium text-slate-700">
+                  Email Corporativo <span className="text-rose-500">*</span>
                 </label>
-                <input
-                  type="email"
-                  value={forgotPasswordEmail}
-                  onChange={(e) => setForgotPasswordEmail(e.target.value)}
-                  placeholder="nome@empresa.com"
-                  className="w-full px-4 py-2.5 border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none transition-all"
-                />
+                <div className="relative">
+                  <input
+                    name="email"
+                    type="email"
+                    value={formData.email}
+                    onChange={handleInputChange}
+                    placeholder="nome@empresa.com"
+                    className={`w-full pl-10 pr-4 py-2.5 sm:py-3 bg-white border ${
+                      errorMessage && !formData.email 
+                        ? 'border-rose-300 focus:border-rose-500' 
+                        : 'border-slate-300 focus:border-emerald-500'
+                    } rounded-xl focus:ring-2 focus:ring-emerald-500/20 text-slate-900 outline-none transition-all text-sm`}
+                    disabled={isLoading}
+                    required
+                  />
+                  <Mail className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                </div>
               </div>
-              
+
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium text-slate-700">
+                  Senha <span className="text-rose-500">*</span>
+                </label>
+                <div className="relative">
+                  <input
+                    name="password"
+                    type="password"
+                    value={formData.password}
+                    onChange={handleInputChange}
+                    placeholder="Digite sua senha"
+                    className={`w-full pl-10 pr-4 py-2.5 sm:py-3 bg-white border ${
+                      errorMessage && !formData.password 
+                        ? 'border-rose-300 focus:border-rose-500' 
+                        : 'border-slate-300 focus:border-emerald-500'
+                    } rounded-xl focus:ring-2 focus:ring-emerald-500/20 text-slate-900 outline-none transition-all text-sm`}
+                    disabled={isLoading}
+                    required
+                  />
+                  <Lock className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between">
+                <label className="flex items-center space-x-2 cursor-pointer">
+                  <input 
+                    type="checkbox" 
+                    checked={rememberMe}
+                    onChange={handleRememberMeChange}
+                    className="w-4 h-4 text-emerald-500 rounded border-slate-300 focus:ring-emerald-500/20" 
+                    disabled={isLoading}
+                  />
+                  <span className="text-sm text-slate-600">Lembrar-me</span>
+                </label>
+                <button 
+                  type="button" 
+                  onClick={() => setShowForgotPassword(true)}
+                  className="text-sm text-emerald-600 hover:text-emerald-700 font-medium disabled:text-slate-400"
+                  disabled={isLoading}
+                >
+                  Esqueceu a senha?
+                </button>
+              </div>
+
               <button
-                onClick={handleForgotPassword}
-                className="w-full py-3 bg-emerald-500 hover:bg-emerald-600 text-white font-bold rounded-xl transition-colors"
+                type="submit"
+                disabled={isLoading}
+                className="w-full py-3 sm:py-3.5 bg-emerald-500 hover:bg-emerald-600 disabled:bg-emerald-400 text-white font-bold rounded-xl transition-colors shadow-md hover:shadow-lg disabled:cursor-not-allowed flex items-center justify-center gap-2"
               >
-                Enviar Link de Recuperação
+                {isLoading ? (
+                  <>
+                    <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                    Autenticando...
+                  </>
+                ) : (
+                  'Entrar no Sistema'
+                )}
               </button>
-              
+            </form>
+
+            <div className="mt-6 sm:mt-8 pt-4 sm:pt-6 border-t border-slate-100 text-center">
+              <p className="text-sm text-slate-500">
+                Não tem uma conta?
+              </p>
               <button
-                onClick={() => setShowForgotPassword(false)}
-                className="w-full py-2 text-slate-500 hover:text-slate-700 text-sm"
+                onClick={() => setShowRegister(true)}
+                disabled={isLoading}
+                className="text-sm text-emerald-600 hover:text-emerald-700 font-medium disabled:text-slate-400 transition-colors flex items-center justify-center gap-2 mx-auto mt-2"
               >
-                Cancelar
+                <UserPlus size={16} />
+                Criar conta
+              </button>
+            </div>
+
+            <div className="mt-6 sm:mt-8 pt-4 sm:pt-6 border-t border-slate-100 text-center">
+              <button
+                onClick={() => setView('landing')}
+                disabled={isLoading}
+                className="text-sm text-slate-500 hover:text-slate-700 disabled:text-slate-400 transition-colors flex items-center justify-center gap-2 mx-auto"
+              >
+                <ChevronLeft size={16} />
+                Voltar para o início
               </button>
             </div>
           </div>
-        </div>
-      )}
 
-      {/* Modal de Registo */}
-      {showRegister && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl p-6 sm:p-8 max-w-md w-full shadow-2xl">
-            <div className="flex items-center justify-between mb-6">
-              <h3 className="text-lg font-bold text-slate-900">Criar Nova Conta</h3>
-              <button 
-                onClick={() => { setShowRegister(false); setRegisterData({ name: '', email: '', password: '', confirmPassword: '' }); setRegisterError(null); }}
-                className="text-slate-400 hover:text-slate-600"
-              >
-                <X size={24} />
-              </button>
-            </div>
-            
-            {registerSuccess ? (
-              <div className="text-center py-8">
-                <div className="w-16 h-16 bg-emerald-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                  <CheckCircle2 size={32} className="text-emerald-600" />
-                </div>
-                <h4 className="text-lg font-bold text-slate-900 mb-2">Conta Criada!</h4>
-                <p className="text-slate-600">A redirecionar para o sistema...</p>
+          <div className="mt-6 sm:mt-8 text-center">
+            <p className="text-xs text-slate-400">
+              © 2026 GESTORA • Sistema de Gestão de Tarefas
+            </p>
+            <p className="text-[10px] text-slate-400 mt-1">
+              Suporte: suporte@gestora.com
+            </p>
+          </div>
+        </div>
+
+        {showForgotPassword && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-2xl p-6 sm:p-8 max-w-md w-full shadow-2xl">
+              <div className="flex items-center justify-between mb-6">
+                <h3 className="text-lg font-bold text-slate-900">Recuperar Senha</h3>
+                <button 
+                  onClick={() => setShowForgotPassword(false)}
+                  className="text-slate-400 hover:text-slate-600"
+                >
+                  <X size={24} />
+                </button>
               </div>
-            ) : (
-              <form onSubmit={handleRegister} className="space-y-4">
-                {registerError && (
-                  <div className="p-3 bg-rose-50 border border-rose-200 rounded-lg">
-                    <p className="text-rose-700 text-sm">{registerError}</p>
-                  </div>
-                )}
-                
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1.5">
-                    Nome Completo <span className="text-rose-500">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    name="name"
-                    value={registerData.name}
-                    onChange={handleRegisterInputChange}
-                    placeholder="Seu nome completo"
-                    className="w-full px-4 py-2.5 border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none transition-all"
-                    required
-                  />
+              
+              <p className="text-sm text-slate-600 mb-6">
+                Digite o seu email para receber um link de recuperação de senha.
+              </p>
+              
+              {forgotPasswordMessage && (
+                <div className={`mb-4 p-3 rounded-lg text-sm ${
+                  forgotPasswordMessage.includes('enviado') 
+                    ? 'bg-emerald-50 text-emerald-700' 
+                    : 'bg-rose-50 text-rose-700'
+                }`}>
+                  {forgotPasswordMessage}
                 </div>
-                
+              )}
+              
+              <div className="space-y-4">
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1.5">
-                    Email <span className="text-rose-500">*</span>
+                    Email
                   </label>
                   <input
                     type="email"
-                    name="email"
-                    value={registerData.email}
-                    onChange={handleRegisterInputChange}
+                    value={forgotPasswordEmail}
+                    onChange={(e) => setForgotPasswordEmail(e.target.value)}
                     placeholder="nome@empresa.com"
                     className="w-full px-4 py-2.5 border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none transition-all"
-                    required
-                  />
-                </div>
-                
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1.5">
-                    Senha <span className="text-rose-500">*</span>
-                  </label>
-                  <input
-                    type="password"
-                    name="password"
-                    value={registerData.password}
-                    onChange={handleRegisterInputChange}
-                    placeholder="Mínimo 6 caracteres"
-                    className="w-full px-4 py-2.5 border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none transition-all"
-                    required
-                    minLength={6}
-                  />
-                </div>
-                
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1.5">
-                    Confirmar Senha <span className="text-rose-500">*</span>
-                  </label>
-                  <input
-                    type="password"
-                    name="confirmPassword"
-                    value={registerData.confirmPassword}
-                    onChange={handleRegisterInputChange}
-                    placeholder="Confirme sua senha"
-                    className="w-full px-4 py-2.5 border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none transition-all"
-                    required
                   />
                 </div>
                 
                 <button
-                  type="submit"
-                  disabled={isLoading}
-                  className="w-full py-3 bg-emerald-500 hover:bg-emerald-600 disabled:bg-emerald-400 text-white font-bold rounded-xl transition-colors flex items-center justify-center gap-2"
+                  onClick={handleForgotPassword}
+                  className="w-full py-3 bg-emerald-500 hover:bg-emerald-600 text-white font-bold rounded-xl transition-colors"
                 >
-                  {isLoading ? (
-                    <>
-                      <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                      A criar conta...
-                    </>
-                  ) : (
-                    'Criar Conta'
-                  )}
+                  Enviar Link de Recuperação
                 </button>
                 
                 <button
-                  type="button"
-                  onClick={() => { setShowRegister(false); setRegisterData({ name: '', email: '', password: '', confirmPassword: '' }); setRegisterError(null); }}
+                  onClick={() => setShowForgotPassword(false)}
                   className="w-full py-2 text-slate-500 hover:text-slate-700 text-sm"
                 >
                   Cancelar
                 </button>
-              </form>
-            )}
+              </div>
+            </div>
           </div>
-        </div>
-      )}
-    </div>
-  );
-};
+        )}
+
+        {showRegister && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-2xl p-6 sm:p-8 max-w-md w-full shadow-2xl">
+              <div className="flex items-center justify-between mb-6">
+                <h3 className="text-lg font-bold text-slate-900">Criar Nova Conta</h3>
+                <button 
+                  onClick={() => { setShowRegister(false); setRegisterData({ name: '', email: '', password: '', confirmPassword: '' }); setRegisterError(null); }}
+                  className="text-slate-400 hover:text-slate-600"
+                >
+                  <X size={24} />
+                </button>
+              </div>
+              
+              {registerSuccess ? (
+                <div className="text-center py-8">
+                  <div className="w-16 h-16 bg-emerald-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <CheckCircle2 size={32} className="text-emerald-600" />
+                  </div>
+                  <h4 className="text-lg font-bold text-slate-900 mb-2">Conta Criada!</h4>
+                  <p className="text-slate-600">A redirecionar para o sistema...</p>
+                </div>
+              ) : (
+                <form onSubmit={handleRegister} className="space-y-4">
+                  {registerError && (
+                    <div className="p-3 bg-rose-50 border border-rose-200 rounded-lg">
+                      <p className="text-rose-700 text-sm">{registerError}</p>
+                    </div>
+                  )}
+                  
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1.5">
+                      Nome Completo <span className="text-rose-500">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      name="name"
+                      value={registerData.name}
+                      onChange={handleRegisterInputChange}
+                      placeholder="Seu nome completo"
+                      className="w-full px-4 py-2.5 border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none transition-all"
+                      required
+                    />
+                  </div>
+                  
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1.5">
+                      Email <span className="text-rose-500">*</span>
+                    </label>
+                    <input
+                      type="email"
+                      name="email"
+                      value={registerData.email}
+                      onChange={handleRegisterInputChange}
+                      placeholder="nome@empresa.com"
+                      className="w-full px-4 py-2.5 border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none transition-all"
+                      required
+                    />
+                  </div>
+                  
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1.5">
+                      Senha <span className="text-rose-500">*</span>
+                    </label>
+                    <input
+                      type="password"
+                      name="password"
+                      value={registerData.password}
+                      onChange={handleRegisterInputChange}
+                      placeholder="Mínimo 6 caracteres"
+                      className="w-full px-4 py-2.5 border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none transition-all"
+                      required
+                      minLength={6}
+                    />
+                  </div>
+                  
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1.5">
+                      Confirmar Senha <span className="text-rose-500">*</span>
+                    </label>
+                    <input
+                      type="password"
+                      name="confirmPassword"
+                      value={registerData.confirmPassword}
+                      onChange={handleRegisterInputChange}
+                      placeholder="Confirme sua senha"
+                      className="w-full px-4 py-2.5 border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none transition-all"
+                      required
+                    />
+                  </div>
+                  
+                  <button
+                    type="submit"
+                    disabled={isLoading}
+                    className="w-full py-3 bg-emerald-500 hover:bg-emerald-600 disabled:bg-emerald-400 text-white font-bold rounded-xl transition-colors flex items-center justify-center gap-2"
+                  >
+                    {isLoading ? (
+                      <>
+                        <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                        A criar conta...
+                      </>
+                    ) : (
+                      'Criar Conta'
+                    )}
+                  </button>
+                  
+                  <button
+                    type="button"
+                    onClick={() => { setShowRegister(false); setRegisterData({ name: '', email: '', password: '', confirmPassword: '' }); setRegisterError(null); }}
+                    className="w-full py-2 text-slate-500 hover:text-slate-700 text-sm"
+                  >
+                    Cancelar
+                  </button>
+                </form>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
 
   const SetPasswordPage = () => {
     const [password, setPassword] = useState('');
@@ -1063,9 +1097,6 @@ const LoginPage = () => {
 
       setIsLoading(true);
       try {
-        // A nova API usa PATCH /users/:id/password após login
-        // Para fluxo de convite, o admin cria user com senha temporária
-        // e o user altera após primeiro login
         setSuccessMessage('Para alterar a senha, faça login e use a opção no perfil.');
         setInviteToken(null);
         if (typeof window !== 'undefined') {
@@ -1193,7 +1224,6 @@ const LoginPage = () => {
           {t.landingDesc}
         </p>
         <div className="flex flex-col sm:flex-row gap-4 sm:gap-5 justify-center items-center pt-6 sm:pt-8 animate-in">
-          {/* Design do antigo Ver Roadmap: borda, ícone seta, hover */}
           <button onClick={() => setView('login')} className="flex items-center justify-center gap-2 px-10 sm:px-14 py-4 sm:py-5 rounded-full border-2 border-[#10b981] text-[#10b981] font-bold hover:bg-[#10b981] hover:text-white transition-all text-base group w-full sm:w-auto">
             Começar Agora <ArrowUpRight size={20} className="group-hover:translate-x-1 group-hover:-translate-y-1 transition-transform" />
           </button>
@@ -1217,18 +1247,28 @@ const LoginPage = () => {
   if (view === 'landing') return <LandingPage />;
   if (view === 'login') return <LoginPage />;
   if (view === 'set-password') return <SetPasswordPage />;
+  if (view === 'reset-password') return <PasswordResetPage />;
 
+
+
+  
   return (
     <div className="h-screen flex bg-[#f8fafc] dark:bg-slate-950 transition-all font-sans overflow-hidden">
       <input ref={avatarInputRef} type="file" accept="image/*" className="hidden" onChange={(e) => {
         const f = e.target.files?.[0];
-        if (f && uploadingAvatarFor) { const r = new FileReader(); r.onload = () => { saveAvatar(uploadingAvatarFor, r.result as string); setUploadingAvatarFor(null); }; r.readAsDataURL(f); }
+        if (f && uploadingAvatarFor) { 
+          const r = new FileReader(); 
+          r.onload = () => { 
+            saveAvatar(uploadingAvatarFor, r.result as string); 
+            setUploadingAvatarFor(null); 
+          }; 
+          r.readAsDataURL(f); 
+        }
         e.target.value = '';
       }} />
       
       {isAppSidebarOpen && <div className="fixed inset-0 bg-slate-900/40 z-[75] lg:hidden" onClick={() => setAppSidebarOpen(false)} aria-hidden="true" />}
       
-      {/* Sidebar - altura total (toda a vertical); em mobile drawer */}
       <aside className={`fixed lg:relative left-0 top-0 h-screen flex flex-col z-[80] transition-all duration-300 ease-in-out
         bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800
         ${isAppSidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}
@@ -1337,7 +1377,7 @@ const LoginPage = () => {
                  <StatCard icon={<AlertTriangle className="text-rose-600" />} label={t.overdueTasks} value={stats.overdue} color="rose" />
                  <StatCard icon={<CheckCircle2 className="text-emerald-600" />} label={t.completedTasks} value={stats.completed} color="emerald" />
               </div>
-              {/* Relatório breve: tarefas por estado */}
+              
               <div className="bg-white dark:bg-slate-900 rounded-2xl sm:rounded-[3rem] p-6 sm:p-8 lg:p-10 border border-slate-100 dark:border-slate-800 shadow-sm">
                 <h3 className="text-base sm:text-lg font-black mb-6 tracking-tight">Tarefas por Estado</h3>
                 <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-3 sm:gap-4">
@@ -1349,7 +1389,7 @@ const LoginPage = () => {
                   ))}
                 </div>
               </div>
-              {/* Actividades recentes do sistema: quem alterou o quê */}
+              
               <div className="bg-white dark:bg-slate-900 rounded-2xl sm:rounded-[3rem] p-6 sm:p-8 lg:p-12 border border-slate-100 dark:border-slate-800 shadow-sm">
                 <h3 className="text-base sm:text-lg font-black mb-6 sm:mb-10 tracking-tight">{t.latestUpdates}</h3>
                 <div className="space-y-4 sm:space-y-6 max-h-[420px] overflow-y-auto pr-2">
@@ -1374,7 +1414,6 @@ const LoginPage = () => {
                 </div>
               </div>
 
-              {/* Log detalhado separado das notificações */}
               <div className="bg-white dark:bg-slate-900 rounded-2xl sm:rounded-[3rem] p-6 sm:p-8 lg:p-12 border border-slate-100 dark:border-slate-800 shadow-sm">
                 <h3 className="text-base sm:text-lg font-black mb-6 sm:mb-10 tracking-tight">Log de Actividades</h3>
                 <div className="space-y-3 max-h-[420px] overflow-y-auto pr-2">
@@ -1515,6 +1554,7 @@ const LoginPage = () => {
                     setUser(updated);
                     addNotification(user!.id, 'Perfil atualizado com sucesso.', 'success');
                   } catch (error) {
+                    console.error('Erro ao atualizar perfil:', error);
                     logger.warn('User', 'Erro ao atualizar perfil na API', error);
                     addNotification(user!.id, 'Não foi possível atualizar o perfil na API.', 'error');
                   }
@@ -1576,6 +1616,7 @@ const LoginPage = () => {
                     setProfilePasswordSuccess('Senha atualizada com sucesso.');
                     setActiveTabSafe('dashboard');
                   } catch (error) {
+                    console.error('Erro ao alterar senha:', error);
                     logger.warn('User', 'Erro ao atualizar senha na API', error);
                     setProfilePasswordError('Não foi possível atualizar a senha na API.');
                   }
@@ -1637,7 +1678,6 @@ const LoginPage = () => {
         </div>
       </main>
 
-      {/* Task Create/Edit Modal - em colunas, multi-responsáveis, data entrega auto */}
       {(isTaskModalOpen || editingTaskId) && (() => {
         const editTask = editingTaskId ? tasks.find(t => t.id === editingTaskId) : null;
         const respIds = editTask ? [editTask.responsibleId, ...(editTask.intervenientes || [])] : [];
@@ -1663,27 +1703,38 @@ const LoginPage = () => {
                 const start = fd.get('startDate') as string;
                 const val = Number(fd.get('deadlineValue'));
                 const type = (fd.get('deadlineType') as 'days'|'hours') || 'days';
-                const delivery = new Date(start);
-                if (type === 'days') delivery.setDate(delivery.getDate() + val);
-                else delivery.setHours(delivery.getHours() + val);
+                
+                // Para o backend Spring Boot, sempre usar days
+                const daysToFinish = type === 'days' ? val : Math.ceil(val / 24);
 
                 if (editTask) {
-                  const updated = tasks.map(t => t.id === editTask.id ? { ...t, title: fd.get('title') as string, description: fd.get('description') as string, startDate: start, deadlineValue: val, deadlineType: type, deliveryDate: delivery.toISOString(), responsibleId: ids[0], intervenientes: ids.slice(1), updatedAt: new Date().toISOString() } : t);
+                  // Atualizar tarefa existente
+                  const updated = tasks.map(t => t.id === editTask.id ? { 
+                    ...t, 
+                    title: fd.get('title') as string, 
+                    description: fd.get('description') as string, 
+                    startDate: start, 
+                    deadlineValue: val, 
+                    deadlineType: type, 
+                    deliveryDate: new Date(start).toISOString(), // Será recalculado pelo backend
+                    responsibleId: ids[0], 
+                    intervenientes: ids.slice(1), 
+                    updatedAt: new Date().toISOString() 
+                  } : t);
                   
                   try {
                     const taskToUpdate = updated.find(t => t.id === editTask.id)!;
                     const apiResponse = await apiTasks.update(editTask.id, taskToUpdate);
                     if (apiResponse && apiResponse.id) {
-                      // Se a API retornar dados atualizados, usar esses
                       const mappedTask = mapTaskFromAPI(apiResponse);
                       saveTasks(updated.map(t => t.id === editTask.id ? mappedTask : t));
-                      logger.debug('Task', 'Tarefa atualizada na API com sucesso');
+                      console.log('Tarefa atualizada:', mappedTask);
                     } else {
                       saveTasks(updated);
                     }
                     addNotification(user!.id, 'Tarefa atualizada com sucesso.', 'success');
                   } catch (error) {
-                    logger.warn('Task', 'Erro ao atualizar na API', error);
+                    console.error('Erro ao atualizar tarefa:', error);
                     addNotification(user!.id, 'Não foi possível atualizar na API.', 'error');
                     return;
                   }
@@ -1691,19 +1742,28 @@ const LoginPage = () => {
                   addSystemActivity({ userId: user!.id, userName: user!.name, action: 'updated', entityType: 'task', entityId: editTask.id, entityTitle: fd.get('title') as string });
                   setEditingTaskId(null); setIsTaskModalOpen(false);
                 } else {
+                  // Criar nova tarefa
                   try {
-                    const payload = { title: fd.get('title') as string, description: fd.get('description') as string, startDate: start, deadlineValue: val, deadlineType: type, deliveryDate: delivery.toISOString(), responsibleId: ids[0], intervenientes: ids.slice(1), status: TaskStatus.ABERTO };
+                    const payload = { 
+                      title: fd.get('title') as string, 
+                      description: fd.get('description') as string, 
+                      startDate: start, 
+                      deadlineValue: daysToFinish, 
+                      deadlineType: 'days', // Sempre days para o backend
+                      responsibles: ids.map(id => Number(id)),
+                      status: 'PENDENTE'
+                    };
                     const apiResponse = await apiTasks.create(payload);
                     if (!apiResponse || !apiResponse.id) {
                       throw new Error('Resposta inválida da API.');
                     }
                     const mappedTask = mapTaskFromAPI(apiResponse);
                     saveTasks([mappedTask, ...tasks]);
-                    logger.debug('Task', 'Tarefa criada na API com sucesso');
+                    console.log('Tarefa criada:', mappedTask);
                     addSystemActivity({ userId: user!.id, userName: user!.name, action: 'created', entityType: 'task', entityId: mappedTask.id, entityTitle: mappedTask.title });
                     addNotification(user!.id, 'Tarefa criada com sucesso.', 'success');
                   } catch (error) {
-                    logger.warn('Task', 'Erro ao criar na API', error);
+                    console.error('Erro ao criar tarefa:', error);
                     addNotification(user!.id, 'Não foi possível criar na API.', 'error');
                     return;
                   }
@@ -1758,7 +1818,6 @@ const LoginPage = () => {
         );
       })()}
 
-      {/* Add User Modal */}
       {isAddUserOpen && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-[100] flex items-center justify-center p-4">
           <div className="bg-white dark:bg-slate-900 w-full max-w-md rounded-2xl p-8 border border-slate-100 dark:border-slate-800 shadow-2xl">
@@ -1775,11 +1834,15 @@ const LoginPage = () => {
               e.preventDefault();
               setUserFormError(null);
               const fd = new FormData(e.target as HTMLFormElement);
-              const newUser = { name: fd.get('name') as string, email: fd.get('email') as string, role: (fd.get('role') as UserRole) || UserRole.EMPLOYEE };
+              const newUser = { 
+                name: fd.get('name') as string, 
+                email: fd.get('email') as string, 
+                role: (fd.get('role') as UserRole) || UserRole.EMPLOYEE,
+                phone: fd.get('phone') as string || ''
+              };
               let createdUser: User | null = null;
 
               try {
-                // Verificar se o email já existe localmente
                 const emailExistsLocally = users.some(u => u.email.toLowerCase() === newUser.email.toLowerCase());
                 if (emailExistsLocally) {
                   setUserFormError('Este email já está cadastrado no sistema. Use um email diferente.');
@@ -1789,43 +1852,42 @@ const LoginPage = () => {
                 const apiResponse = await apiAdminUsers.create({
                   name: newUser.name,
                   email: newUser.email,
-                  role: newUser.role
+                  role: newUser.role === UserRole.ADMIN ? 'ADMIN' : 'USER',
+                  phone: newUser.phone
                 });
 
                 if (apiResponse?.user) {
                   createdUser = mapUserFromAPI(apiResponse.user);
                 } else if (apiResponse?.id) {
                   createdUser = mapUserFromAPI(apiResponse);
+                } else if (apiResponse) {
+                  createdUser = mapUserFromAPI(apiResponse);
                 }
 
-                if (apiResponse?.inviteLink) {
-                  logger.debug('User', 'Link de convite gerado', apiResponse.inviteLink);
+                if (!createdUser) {
+                  setUserFormError('Não foi possível obter o utilizador criado na API.');
+                  return;
                 }
+
+                saveUsers([...users, createdUser]);
+                users.filter(u => u.role === UserRole.ADMIN).forEach(u => {
+                  addNotification(u.id, `Novo utilizador criado: ${createdUser!.name} (${createdUser!.email})`, 'info');
+                });
+                setIsAddUserOpen(false);
+                addNotification(user!.id, `Utilizador ${createdUser.name} criado com sucesso.`, 'success');
               } catch (error: any) {
-                // Verificar se é erro de email duplicado (409)
                 if (error.message?.includes('409') || error.message?.includes('Conflict') || error.message?.toLowerCase().includes('email') || error.message?.toLowerCase().includes('duplicate')) {
                   setUserFormError('Este email já está cadastrado no sistema. Use um email diferente.');
                   return;
                 }
-                logger.warn('User', 'Erro ao criar utilizador na API', error);
+                console.error('Erro ao criar usuário:', error);
                 setUserFormError('Não foi possível criar na API.');
-                return;
               }
-              
-              if (!createdUser) {
-                setUserFormError('Não foi possível obter o utilizador criado na API.');
-                return;
-              }
-
-              saveUsers([...users, createdUser]);
-              users.filter(u => u.role === UserRole.ADMIN).forEach(u => {
-                addNotification(u.id, `Novo utilizador criado: ${createdUser.name} (${createdUser.email})`, 'info');
-              });
-              setIsAddUserOpen(false);
             }}>
               <div className="space-y-4">
                 <div><label className="text-[10px] font-black uppercase text-slate-400 block mb-1">{t.name}</label><input name="name" className="w-full px-4 py-3 rounded-xl bg-slate-50 dark:bg-slate-800 font-bold" required /></div>
                 <div><label className="text-[10px] font-black uppercase text-slate-400 block mb-1">{t.email}</label><input name="email" type="email" className="w-full px-4 py-3 rounded-xl bg-slate-50 dark:bg-slate-800 font-bold" required /></div>
+                <div><label className="text-[10px] font-black uppercase text-slate-400 block mb-1">Telefone</label><input name="phone" type="tel" className="w-full px-4 py-3 rounded-xl bg-slate-50 dark:bg-slate-800 font-bold" /></div>
                 <div><label className="text-[10px] font-black uppercase text-slate-400 block mb-1">Cargo/Posição</label><input name="position" className="w-full px-4 py-3 rounded-xl bg-slate-50 dark:bg-slate-800 font-bold" /></div>
                 <div><label className="text-[10px] font-black uppercase text-slate-400 block mb-1">Função</label><select name="role" className="w-full px-4 py-3 rounded-xl bg-slate-50 dark:bg-slate-800 font-bold"><option value={UserRole.EMPLOYEE}>Funcionário</option><option value={UserRole.ADMIN}>Administrador</option></select></div>
                 <p className="text-[10px] text-slate-400">Uma senha temporária será gerada automaticamente e enviada por email.</p>
@@ -1836,7 +1898,6 @@ const LoginPage = () => {
         </div>
       )}
 
-      {/* Edit User Modal */}
       {editingUserId && (() => {
         const u = users.find(x => x.id === editingUserId);
         if (!u) return null;
@@ -1868,8 +1929,9 @@ const LoginPage = () => {
                     }
                   });
                   setEditingUserId(null);
+                  addNotification(user!.id, `Utilizador ${u.name} atualizado com sucesso.`, 'success');
                 } catch (error) {
-                  logger.warn('User', 'Erro ao atualizar utilizador na API', error);
+                  console.error('Erro ao atualizar usuário:', error);
                   setUserFormError('Não foi possível atualizar na API.');
                 }
               }}>
@@ -1888,6 +1950,396 @@ const LoginPage = () => {
     </div>
   );
 }
+
+
+
+// No componente LoginPage, na função handleForgotPassword:
+const handleForgotPassword = async () => {
+  if (!forgotPasswordEmail) {
+    setForgotPasswordMessage('Por favor, insira o seu email.');
+    return;
+  }
+  
+  try {
+    const response = await fetch('http://localhost:8080/auth/forgot-password', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ email: forgotPasswordEmail })
+    });
+
+    const data = await response.json();
+    
+    if (response.ok) {
+      setForgotPasswordMessage(data.message || `Um email de recuperação foi enviado para ${forgotPasswordEmail}`);
+    } else {
+      setForgotPasswordMessage(data.error || 'Erro ao solicitar recuperação.');
+    }
+  } catch (error) {
+    setForgotPasswordMessage('Erro de conexão. Tente novamente.');
+  }
+  
+  setTimeout(() => {
+    setShowForgotPassword(false);
+    setForgotPasswordEmail('');
+    setForgotPasswordMessage(null);
+  }, 3000);
+};
+
+
+
+const PasswordResetPage = () => {
+  const [token, setToken] = useState<string | null>(null);
+  const [isTokenValid, setIsTokenValid] = useState<boolean | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [email, setEmail] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [step, setStep] = useState<'verify-token' | 'reset-form'>('verify-token');
+
+  useEffect(() => {
+    // Extrair token da URL
+    const params = new URLSearchParams(window.location.search);
+    const tokenParam = params.get('token');
+    
+     if (token) {
+    // Token de setup (novo usuário)
+    setInviteToken(token);
+    setView('set-password');
+    return;
+  }
+
+  if (resetToken) {
+    // Token de reset (usuário existente)
+    setInviteToken(resetToken);
+    setView('reset-password');
+    return;
+  }
+
+    if (tokenParam) {
+      setToken(tokenParam);
+      validateToken(tokenParam);
+    } else {
+      setIsTokenValid(false);
+      setErrorMessage('Link inválido ou expirado. Solicite um novo link.');
+    }
+  }, []);
+
+  const validateToken = async (tokenToValidate: string) => {
+    try {
+      setIsLoading(true);
+      const response = await fetch(`http://localhost:8080/auth/validate-token/${tokenToValidate}`, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      });
+
+      if (!response.ok) {
+        throw new Error('Token inválido');
+      }
+
+      const data = await response.json();
+      
+      if (data.valid) {
+        setIsTokenValid(true);
+        setEmail(data.user?.email || '');
+        setStep('reset-form');
+      } else {
+        setIsTokenValid(false);
+        setErrorMessage(data.error || 'Token inválido ou expirado.');
+      }
+    } catch (error) {
+      setIsTokenValid(false);
+      setErrorMessage('Erro ao validar token. Tente novamente.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleSubmitReset = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setErrorMessage(null);
+    setSuccessMessage(null);
+
+    if (!newPassword.trim()) {
+      setErrorMessage('Por favor, preencha a nova senha.');
+      return;
+    }
+
+    if (newPassword.trim().length < 6) {
+      setErrorMessage('A senha deve ter pelo menos 6 caracteres.');
+      return;
+    }
+
+    if (newPassword !== confirmPassword) {
+      setErrorMessage('As senhas não coincidem.');
+      return;
+    }
+
+    setIsLoading(true);
+
+    try {
+      const response = await fetch('http://localhost:8080/auth/reset-password', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          token,
+          password: newPassword,
+          confirmPassword: confirmPassword
+        })
+      });
+
+      const data = await response.json();
+
+      if (response.ok) {
+        setSuccessMessage(data.message || 'Senha redefinida com sucesso!');
+        
+        // Redirecionar para login após 3 segundos
+        setTimeout(() => {
+          setView('login');
+        }, 3000);
+      } else {
+        setErrorMessage(data.error || 'Erro ao redefinir senha.');
+      }
+    } catch (error) {
+      setErrorMessage('Erro de conexão. Verifique sua internet e tente novamente.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleResendLink = () => {
+    // Redirecionar para página de "esqueci minha senha"
+    setView('login');
+    // Você pode querer abrir um modal de "esqueci senha" aqui
+  };
+
+  if (isLoading && step === 'verify-token') {
+    return (
+      <div className="min-h-screen bg-slate-100 flex items-center justify-center p-4">
+        <div className="text-center">
+          <div className="w-16 h-16 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+          <p className="text-slate-600">Validando token...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (step === 'verify-token') {
+    return (
+      <div className="min-h-screen bg-slate-100 flex items-center justify-center p-4 sm:p-6 font-sans">
+        <div className="w-full max-w-md">
+          <div className="text-center mb-8 sm:mb-10">
+            <div className="inline-flex p-3 sm:p-4 bg-emerald-500 rounded-2xl shadow-lg mb-4 sm:mb-6">
+              <Lock size={28} className="sm:w-9 sm:h-9 text-white" />
+            </div>
+            <h1 className="text-2xl sm:text-3xl font-black text-slate-900 tracking-tight mb-2">Redefinir Senha</h1>
+            <p className="text-xs sm:text-sm text-slate-500 font-medium">Verificando link de segurança</p>
+          </div>
+
+          <div className="bg-white rounded-2xl sm:rounded-3xl p-6 sm:p-8 shadow-lg border border-slate-200">
+            {isTokenValid === false && (
+              <>
+                <div className="mb-6 p-4 bg-rose-50 border border-rose-200 rounded-xl">
+                  <div className="flex items-start gap-3">
+                    <AlertTriangle className="text-rose-500 mt-0.5 flex-shrink-0" size={20} />
+                    <div>
+                      <h3 className="font-bold text-rose-700 text-sm mb-1">Link Inválido</h3>
+                      <p className="text-rose-600 text-xs">{errorMessage}</p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  <div className="p-3 bg-slate-50 rounded-lg">
+                    <p className="text-slate-600 text-sm mb-2">Possíveis causas:</p>
+                    <ul className="text-slate-500 text-xs space-y-1">
+                      <li className="flex items-start gap-2">
+                        <span className="text-rose-500 mt-0.5">•</span>
+                        <span>O link expirou (válido por 2 horas)</span>
+                      </li>
+                      <li className="flex items-start gap-2">
+                        <span className="text-rose-500 mt-0.5">•</span>
+                        <span>O link já foi utilizado</span>
+                      </li>
+                      <li className="flex items-start gap-2">
+                        <span className="text-rose-500 mt-0.5">•</span>
+                        <span>Link incorreto ou incompleto</span>
+                      </li>
+                    </ul>
+                  </div>
+
+                  <button
+                    onClick={handleResendLink}
+                    className="w-full py-3 bg-emerald-500 hover:bg-emerald-600 text-white font-bold rounded-xl transition-colors shadow-lg shadow-emerald-500/25"
+                  >
+                    Solicitar Novo Link
+                  </button>
+
+                  <button
+                    onClick={() => setView('login')}
+                    className="w-full py-2.5 text-slate-500 hover:text-slate-700 text-sm"
+                  >
+                    Voltar para Login
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-slate-100 flex items-center justify-center p-4 sm:p-6 font-sans">
+      <div className="w-full max-w-md">
+        <div className="text-center mb-8 sm:mb-10">
+          <div className="inline-flex p-3 sm:p-4 bg-emerald-500 rounded-2xl shadow-lg mb-4 sm:mb-6">
+            <Lock size={28} className="sm:w-9 sm:h-9 text-white" />
+          </div>
+          <h1 className="text-2xl sm:text-3xl font-black text-slate-900 tracking-tight mb-2">Nova Senha</h1>
+          <p className="text-xs sm:text-sm text-slate-500 font-medium">Digite sua nova senha para {email}</p>
+        </div>
+
+        <div className="bg-white rounded-2xl sm:rounded-3xl p-6 sm:p-8 shadow-lg border border-slate-200">
+          {successMessage ? (
+            <div className="space-y-6">
+              <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-xl">
+                <div className="flex items-start gap-3">
+                  <CheckCircle2 className="text-emerald-500 mt-0.5 flex-shrink-0" size={20} />
+                  <div>
+                    <h3 className="font-bold text-emerald-700 text-sm mb-1">Senha Redefinida!</h3>
+                    <p className="text-emerald-600 text-xs">{successMessage}</p>
+                  </div>
+                </div>
+              </div>
+              
+              <div className="text-center">
+                <div className="w-16 h-16 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+                <p className="text-slate-500 text-sm">Redirecionando para login...</p>
+              </div>
+
+              <Button
+                onClick={() => setView('login')}
+                className="w-full"
+              >
+                Ir para Login Agora
+              </Button>
+            </div>
+          ) : (
+            <>
+              {errorMessage && (
+                <div className="mb-6 p-3 bg-rose-50 border border-rose-200 rounded-lg">
+                  <div className="flex items-start gap-2">
+                    <AlertTriangle className="text-rose-500 mt-0.5 flex-shrink-0" size={16} />
+                    <p className="text-rose-700 text-sm">{errorMessage}</p>
+                  </div>
+                </div>
+              )}
+
+              <form className="space-y-4 sm:space-y-6" onSubmit={handleSubmitReset}>
+                <div className="space-y-1.5">
+                  <label className="text-sm font-medium text-slate-700">
+                    Nova senha <span className="text-rose-500">*</span>
+                  </label>
+                  <div className="relative">
+                    <input
+                      type="password"
+                      value={newPassword}
+                      onChange={(e) => setNewPassword(e.target.value)}
+                      placeholder="Mínimo 6 caracteres"
+                      className="w-full pl-10 pr-4 py-2.5 sm:py-3 bg-white border border-slate-300 focus:border-emerald-500 rounded-xl focus:ring-2 focus:ring-emerald-500/20 text-slate-900 outline-none transition-all text-sm"
+                      disabled={isLoading}
+                      required
+                    />
+                    <Lock className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                  </div>
+                  <p className="text-xs text-slate-400 mt-1">Use letras, números e caracteres especiais para maior segurança</p>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-sm font-medium text-slate-700">
+                    Confirmar senha <span className="text-rose-500">*</span>
+                  </label>
+                  <div className="relative">
+                    <input
+                      type="password"
+                      value={confirmPassword}
+                      onChange={(e) => setConfirmPassword(e.target.value)}
+                      placeholder="Digite novamente a senha"
+                      className="w-full pl-10 pr-4 py-2.5 sm:py-3 bg-white border border-slate-300 focus:border-emerald-500 rounded-xl focus:ring-2 focus:ring-emerald-500/20 text-slate-900 outline-none transition-all text-sm"
+                      disabled={isLoading}
+                      required
+                    />
+                    <Lock className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                  </div>
+                </div>
+
+                <div className="p-3 bg-slate-50 rounded-lg">
+                  <p className="text-slate-600 text-xs font-medium mb-2">Requisitos da senha:</p>
+                  <ul className="text-slate-500 text-xs space-y-1">
+                    <li className={`flex items-center gap-2 ${newPassword.length >= 6 ? 'text-emerald-600' : ''}`}>
+                      <Check size={12} className={newPassword.length >= 6 ? 'text-emerald-500' : 'text-slate-300'} />
+                      <span>Mínimo 6 caracteres</span>
+                    </li>
+                    <li className={`flex items-center gap-2 ${newPassword === confirmPassword && newPassword ? 'text-emerald-600' : ''}`}>
+                      <Check size={12} className={newPassword === confirmPassword && newPassword ? 'text-emerald-500' : 'text-slate-300'} />
+                      <span>As senhas coincidem</span>
+                    </li>
+                  </ul>
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={isLoading}
+                  className="w-full py-3 sm:py-3.5 bg-emerald-500 hover:bg-emerald-600 disabled:bg-emerald-400 text-white font-bold rounded-xl transition-colors shadow-md hover:shadow-lg disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                >
+                  {isLoading ? (
+                    <>
+                      <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                      Redefinindo senha...
+                    </>
+                  ) : (
+                    'Redefinir Senha'
+                  )}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setView('login')}
+                  disabled={isLoading}
+                  className="w-full py-2.5 text-slate-500 hover:text-slate-700 text-sm disabled:text-slate-400 transition-colors"
+                >
+                  Voltar para Login
+                </button>
+              </form>
+            </>
+          )}
+        </div>
+
+        <div className="mt-6 sm:mt-8 text-center">
+          <p className="text-xs text-slate-400">
+            © 2026 GESTORA • Sistema de Gestão de Tarefas
+          </p>
+          <p className="text-[10px] text-slate-400 mt-1">
+            Suporte: suporte@gestora.com
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+
+
+
 
 function SidebarNavItem({ icon, label, active, collapsed, onClick }: any) {
   return (
@@ -1949,7 +2401,6 @@ function TaskCard({ task, user, users, onAdvance, onDelete, onEdit, onAddComment
           <p className="text-xs sm:text-sm text-slate-400 font-medium leading-relaxed line-clamp-3">{task.description}</p>
           {respName && <p className="text-[10px] font-bold text-slate-500 uppercase">Responsável: {respName}{extra}</p>}
 
-          {/* Seção de comentários */}
           {(isTaskMember || isAdmin) && (
             <div className="pt-3 border-t border-slate-100 dark:border-slate-800">
               <div className="flex items-center justify-between mb-2">
@@ -1964,7 +2415,6 @@ function TaskCard({ task, user, users, onAdvance, onDelete, onEdit, onAddComment
                 )}
               </div>
               
-              {/* Mostrar comentários */}
               {(showAllComments || !isAdmin) && (
                 <div className="space-y-2 mb-3 max-h-32 overflow-y-auto">
                   {(task.comments || []).map((c: any) => (
@@ -1977,7 +2427,6 @@ function TaskCard({ task, user, users, onAdvance, onDelete, onEdit, onAddComment
                 </div>
               )}
 
-              {/* Campo para adicionar comentário - apenas para membros da tarefa */}
               {isTaskMember && (
                 <div className="flex gap-2">
                   <input 
