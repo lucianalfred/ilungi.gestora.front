@@ -5,20 +5,18 @@ export enum UserRole {
 }
 
 export enum TaskStatus {
-  ABERTO = 'Aberto',
-  POR_INICIAR = 'Para começar',
-  EM_PROGRESSO = 'Em Progresso',
-  TERMINADO = 'Finalizado',
-  FECHADO = 'Fechado',
-  ATRASADA = 'Entrega Atrasada'
+  PENDENTE = 'PENDENTE',  
+  EM_PROGRESSO = 'EM_PROGRESSO',
+  TERMINADO = 'TERMINADO',
+  FECHADO = 'FECHADO',
+  ATRASADA = 'ATRASADA'
 }
 
 export const StatusOrder = [
-  TaskStatus.ABERTO,
-  TaskStatus.POR_INICIAR,
-  TaskStatus.EM_PROGRESSO,
-  TaskStatus.TERMINADO,
-  TaskStatus.FECHADO
+  TaskStatus.PENDENTE,       
+  TaskStatus.EM_PROGRESSO,   
+  TaskStatus.TERMINADO,      
+  TaskStatus.FECHADO        
 ];
 
 export interface User {

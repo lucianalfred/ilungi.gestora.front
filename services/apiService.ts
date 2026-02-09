@@ -149,6 +149,25 @@ export const apiAuth = {
     
     return handleResponse(res);
   },
+
+
+  validateSetupToken: async (token: string) => {
+    const response = await fetch(`${API_BASE}/auth/validate-setup-token/${token}`, {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json' },
+    });
+    return handleResponse(response);
+  },
+
+  setupPassword: async (token: string, password: string, confirmPassword: string) => {
+    const response = await fetch(`${API_BASE}/auth/setup-password`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token, password, confirmPassword }),
+    });
+    return handleResponse(response);
+  },
+
 };
 
 // =================== TASKS ===================
@@ -257,17 +276,27 @@ export const apiAdminTasks = {
     return handleResponse(res);
   },
 
-  createWithResponsibles: async (taskData: {
+ createWithResponsibles: async (taskData: {
     title: string;
     description?: string;
     daysToFinish?: number;
     status?: string;
-    responsibles: Array<string | number>;
+    responsibles: Array<number>; // ❌ Mude para Array<number>
   }) => {
+    // Garantir que responsibles sejam números
+    const processedData = {
+      ...taskData,
+      responsibles: taskData.responsibles.map(r => 
+        typeof r === 'string' ? parseInt(r, 10) : r
+      ).filter(r => !isNaN(r as number))
+    };
+    
+    console.log('📤 Enviando dados para /admin/tasks:', processedData);
+    
     const res = await fetch(`${API_BASE}/admin/tasks`, {
       method: "POST",
       headers: getHeaders(),
-      body: JSON.stringify(taskData),
+      body: JSON.stringify(processedData),
     });
     return handleResponse(res);
   },

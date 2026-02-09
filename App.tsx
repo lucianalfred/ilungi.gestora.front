@@ -12,7 +12,7 @@ import {
 } from './types';
 import { TRANSLATIONS, STATUS_COLORS } from './constants';
 import { getSmartNotification } from './services/geminiService';
-import { setAuthToken, apiAuth, apiTasks, apiUsers, apiComments, apiAdminUsers, mapTaskFromAPI, mapUserFromAPI, mapCommentFromAPI } from './services/apiService';
+import { setAuthToken, apiAuth, apiTasks,apiAdminTasks, apiUsers, apiComments, apiAdminUsers, mapTaskFromAPI, mapUserFromAPI, mapCommentFromAPI } from './services/apiService';
 import { logger } from './services/logger';
 import { 
   LayoutDashboard, 
@@ -133,7 +133,10 @@ export default function App() {
     return err?.message || 'Falha na autenticação com a API.';
   };
 
-  useEffect(() => {
+
+////
+
+ useEffect(() => {
     // Inicializar com arrays vazios - dados vêm da API
     const savedTasks: Task[] = [];
     const savedUsers: User[] = [];
@@ -253,6 +256,12 @@ export default function App() {
     setUser(null);
     setView('login');
   }, []);
+
+
+
+///
+
+
 
   const filterTasksForUser = (list: Task[], u?: User | null) => {
     if (!u || u.role !== UserRole.EMPLOYEE) return list;
@@ -402,66 +411,138 @@ export default function App() {
     } else setTaskFormDeliveryPreview('');
   };
 
-  const handleAdvanceStatus = async (task: Task) => {
-    const currentIndex = StatusOrder.indexOf(task.status);
-    const nextStatus = StatusOrder[currentIndex + 1];
-    if (!nextStatus) return;
-    
-    const isTaskMember = task.responsibleId === user?.id || task.intervenientes?.includes(user?.id as string);
-    if (user?.role === UserRole.EMPLOYEE && !isTaskMember) return;
-    if (task.status === TaskStatus.TERMINADO && user?.role !== UserRole.ADMIN) return;
+ 
+const handleAdvanceStatus = async (task: Task) => {
+  console.log('🔄 Iniciando handleAdvanceStatus:', {
+    taskId: task.id,
+    currentStatus: task.status,
+    userRole: user?.role,
+    isTaskMember: task.responsibleId === user?.id || task.intervenientes?.includes(user?.id as string)
+  });
+  
+ 
+  let currentStatus: TaskStatus;
+  
+  if (task.status === 'ABERTO' as any) {
+    currentStatus = TaskStatus.PENDENTE;
+    console.log('🔄 Convertendo ABERTO → PENDENTE');
+  } else {
+    // Verifica se o status é válido
+    const validStatus = Object.values(TaskStatus).includes(task.status as TaskStatus);
+    if (!validStatus) {
+      console.error('❌ Status inválido:', task.status);
+      addNotification(user!.id, `Status inválido: ${task.status}`, 'error');
+      return;
+    }
+    currentStatus = task.status as TaskStatus;
+  }
+  
+  // Encontra o índice na ordem de status
+  const currentIndex = StatusOrder.indexOf(currentStatus);
+  const nextStatus = StatusOrder[currentIndex + 1];
+  
+  console.log('📊 Status order:', {
+    StatusOrder,
+    currentIndex,
+    nextStatus,
+    hasNextStatus: !!nextStatus
+  });
+  
+  if (!nextStatus) {
+    console.log('❌ Não há próximo status disponível');
+    return;
+  }
+  
+  const isTaskMember = task.responsibleId === user?.id || task.intervenientes?.includes(user?.id as string);
+  
+  if (user?.role === UserRole.EMPLOYEE && !isTaskMember) {
+    console.log('❌ Usuário não é membro da tarefa');
+    return;
+  }
+  
+  if (task.status === TaskStatus.TERMINADO && user?.role !== UserRole.ADMIN) {
+    console.log('❌ Apenas admin pode avançar de TERMINADO');
+    return;
+  }
 
-    try {
-      // Converter status do frontend para backend
-      const statusMap: Record<string, string> = {
-        'ABERTO': 'PENDENTE',
-        'EM_PROGRESSO': 'EM_PROGRESSO',
-        'TERMINADO': 'TERMINADO',
-        'FECHADO': 'FECHADO',
-        'ATRASADA': 'ATRASADA'
-      };
-      
-      const backendStatus = statusMap[nextStatus] || 'PENDENTE';
-      const response = await apiTasks.updateStatus(task.id, backendStatus);
-      
-      const updatedTask = response ? mapTaskFromAPI(response) : { 
-        ...task, 
-        status: nextStatus, 
-        updatedAt: new Date().toISOString(),
-        closedAt: nextStatus === TaskStatus.FECHADO ? new Date().toISOString() : task.closedAt
-      };
-      
-      const nextTasks = tasks.map(tk => tk.id === task.id ? { ...tk, ...updatedTask } : tk);
-      saveTasks(nextTasks);
-      
-      if (user?.role === UserRole.EMPLOYEE) {
-        try {
-          await apiComments.create(task.id, `Avançou o estado para ${nextStatus}`);
-        } catch (commentError) {
-          logger.warn('Comment', 'Erro ao criar comentário automático na API', commentError);
-        }
+  try {
+    const backendStatus = nextStatus;
+    
+    console.log('📤 Atualizando status:', {
+      taskId: task.id,
+      currentStatus: task.status,
+      nextStatus: nextStatus,
+      backendStatus: backendStatus,
+      endpoint: `/tasks/${task.id}/status`
+    });
+    
+    const response = await apiTasks.updateStatus(task.id, backendStatus);
+    
+    console.log('✅ Resposta da API:', response);
+    
+    const updatedTask = response ? mapTaskFromAPI(response) : { 
+      ...task, 
+      status: nextStatus, 
+      updatedAt: new Date().toISOString(),
+      closedAt: nextStatus === TaskStatus.TERMINADO ? new Date().toISOString() : task.closedAt
+    };
+    
+    console.log('🔄 Tarefa atualizada localmente:', updatedTask);
+    
+    const nextTasks = tasks.map(tk => tk.id === task.id ? { ...tk, ...updatedTask } : tk);
+    saveTasks(nextTasks);
+    
+    if (user?.role === UserRole.EMPLOYEE) {
+      try {
+        await apiComments.create(task.id, `Avançou o estado para ${nextStatus}`);
+        console.log('💬 Comentário automático criado');
+      } catch (commentError) {
+        console.error('❌ Erro ao criar comentário:', commentError);
+        logger.warn('Comment', 'Erro ao criar comentário automático na API', commentError);
       }
-      
-      addSystemActivity({ 
-        userId: user!.id, 
-        userName: user!.name, 
-        action: 'status_changed', 
-        entityType: 'task', 
-        entityId: task.id, 
-        entityTitle: task.title, 
-        fromStatus: task.status, 
-        toStatus: nextStatus 
-      });
-      
+    }
+    
+    addSystemActivity({ 
+      userId: user!.id, 
+      userName: user!.name, 
+      action: 'status_changed', 
+      entityType: 'task', 
+      entityId: task.id, 
+      entityTitle: task.title, 
+      fromStatus: task.status, 
+      toStatus: nextStatus 
+    });
+    
+    console.log('📋 Atividade do sistema registrada');
+    
+    try {
       const aiMsg = await getSmartNotification(task.title, nextStatus, false, false, lang);
       addNotification(task.responsibleId, aiMsg, nextStatus === TaskStatus.TERMINADO ? 'success' : 'info');
-      
-    } catch (error) {
-      console.error('Erro ao atualizar status:', error);
-      logger.warn('Task', 'Erro ao atualizar status na API', error);
-      addNotification(user!.id, 'Não foi possível atualizar o estado na API.', 'error');
+      console.log('🤖 Notificação AI enviada');
+    } catch (aiError) {
+      console.error('❌ Erro na notificação AI:', aiError);
     }
-  };
+    
+  } catch (error: any) {
+    console.error('❌ Erro ao atualizar status:', {
+      error: error.message,
+      stack: error.stack,
+      taskId: task.id,
+      user: user?.id
+    });
+    
+    logger.warn('Task', 'Erro ao atualizar status na API', error);
+    
+    let errorMessage = 'Não foi possível atualizar o estado na API.';
+    if (error.message?.includes('400')) errorMessage = 'Status inválido.';
+    if (error.message?.includes('403') || error.message?.includes('401')) errorMessage = 'Sem permissão para atualizar esta tarefa.';
+    if (error.message?.includes('404')) errorMessage = 'Tarefa não encontrada.';
+    if (error.message?.includes('500')) errorMessage = 'Erro interno no servidor.';
+    
+    addNotification(user!.id, errorMessage, 'error');
+  }
+};
+
 
   const addNotification = async (userId: string, message: string, type: 'info' | 'success' | 'error' = 'info') => {
     const now = Date.now();
@@ -580,18 +661,56 @@ export default function App() {
     };
 
     const handleForgotPassword = async () => {
-      if (!forgotPasswordEmail) {
-        setForgotPasswordMessage('Por favor, insira o seu email.');
-        return;
-      }
+  if (!forgotPasswordEmail) {
+    setForgotPasswordMessage('Por favor, insira o seu email.');
+    return;
+  }
+  
+  // Validação de email
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRegex.test(forgotPasswordEmail)) {
+    setForgotPasswordMessage('Por favor, insira um email válido.');
+    return;
+  }
+  
+  setForgotPasswordMessage('Processando...');
+  
+  try {
+    const response = await fetch('http://localhost:8080/auth/forgot-password', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ email: forgotPasswordEmail })
+    });
+
+    const data = await response.json();
+    
+    if (response.ok) {
+      // ✅ Mantém como string simples
+      setForgotPasswordMessage(
+        `✅ Solicitação enviada com sucesso! Se o email ${forgotPasswordEmail} estiver cadastrado, você receberá uma senha temporária em instantes.`
+      );
       
-      setForgotPasswordMessage(`Um email de recuperação foi enviado para ${forgotPasswordEmail}`);
       setTimeout(() => {
-        setShowForgotPassword(false);
         setForgotPasswordEmail('');
         setForgotPasswordMessage(null);
-      }, 3000);
-    };
+        setShowForgotPassword(false);
+      }, 5000);
+      
+    } else {
+      setForgotPasswordMessage(`❌ Erro: ${data.error || 'Tente novamente mais tarde.'}`);
+    }
+  } catch (error) {
+    setForgotPasswordMessage('❌ Erro de conexão. Verifique sua internet e tente novamente.');
+  }
+  
+  setTimeout(() => {
+    if (showForgotPassword) {
+      setForgotPasswordMessage(null);
+    }
+  }, 10000);
+};
 
     const handleRegister = async (e: React.FormEvent) => {
       e.preventDefault();
@@ -1063,54 +1182,61 @@ export default function App() {
     );
   };
 
-  const SetPasswordPage = () => {
-    const [password, setPassword] = useState('');
-    const [confirmPassword, setConfirmPassword] = useState('');
-    const [isLoading, setIsLoading] = useState(false);
-    const [errorMessage, setErrorMessage] = useState<string | null>(null);
-    const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
-    const handleSubmit = async (e: React.FormEvent) => {
-      e.preventDefault();
-      setErrorMessage(null);
-      setSuccessMessage(null);
+//
 
-      if (!inviteToken) {
-        setErrorMessage('Link inválido ou expirado.');
-        return;
+const SetPasswordPage = () => {
+  const [token, setToken] = useState<string | null>(null);
+  const [isTokenValid, setIsTokenValid] = useState<boolean | null>(null);
+  const [userInfo, setUserInfo] = useState<{name: string, email: string} | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [isValidating, setIsValidating] = useState(true);
+
+  useEffect(() => {
+    
+    const params = new URLSearchParams(window.location.search);
+    const tokenParam = params.get('token');
+    
+    if (tokenParam) {
+      setToken(tokenParam);
+      validateToken(tokenParam);
+    } else {
+      setIsTokenValid(false);
+      setErrorMessage('Link inválido ou incompleto.');
+      setIsValidating(false);
+    }
+  }, []);
+
+  const validateToken = async (tokenToValidate: string) => {
+    try {
+      setIsValidating(true);
+      
+      
+      const data = await apiAuth.validateSetupToken(tokenToValidate);
+      
+      if (data.valid) {
+        setIsTokenValid(true);
+        setUserInfo({
+          name: data.user?.name || '',
+          email: data.user?.email || ''
+        });
+      } else {
+        setIsTokenValid(false);
+        setErrorMessage(data.error || 'Token inválido ou expirado.');
       }
+    } catch (error: any) {
+      setIsTokenValid(false);
+      setErrorMessage(error.message || 'Erro ao validar token. Tente novamente.');
+    } finally {
+      setIsValidating(false);
+    }
 
-      if (!password.trim()) {
-        setErrorMessage('Por favor, preencha a senha.');
-        return;
-      }
 
-      if (password.trim().length < 6) {
-        setErrorMessage('A senha deve ter pelo menos 6 caracteres.');
-        return;
-      }
-
-      if (password !== confirmPassword) {
-        setErrorMessage('As senhas não coincidem.');
-        return;
-      }
-
-      setIsLoading(true);
-      try {
-        setSuccessMessage('Para alterar a senha, faça login e use a opção no perfil.');
-        setInviteToken(null);
-        if (typeof window !== 'undefined') {
-          const cleanUrl = window.location.origin + window.location.pathname;
-          window.history.replaceState({}, document.title, cleanUrl);
-        }
-      } catch (error: any) {
-        setErrorMessage(error?.message || 'Falha ao definir a senha.');
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
-    return (
+      return (
       <div className="min-h-screen bg-slate-100 flex items-center justify-center p-4 sm:p-6 font-sans">
         <div className="w-full max-w-md">
           <div className="text-center mb-8 sm:mb-10">
@@ -1194,6 +1320,59 @@ export default function App() {
       </div>
     );
   };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setErrorMessage(null);
+    setSuccessMessage(null);
+
+    if (!newPassword.trim()) {
+      setErrorMessage('Por favor, preencha a senha.');
+      return;
+    }
+
+    if (newPassword.trim().length < 6) {
+      setErrorMessage('A senha deve ter pelo menos 6 caracteres.');
+      return;
+    }
+
+    if (newPassword !== confirmPassword) {
+      setErrorMessage('As senhas não coincidem.');
+      return;
+    }
+
+    if (!token) {
+      setErrorMessage('Token inválido. Solicite um novo link.');
+      return;
+    }
+
+    setIsLoading(true);
+
+    try {
+      // Usando a função da API service
+      const data = await apiAuth.setupPassword(token, newPassword, confirmPassword);
+      
+      setSuccessMessage(data.message || 'Senha definida com sucesso!');
+      
+      // Limpar URL
+      const cleanUrl = window.location.origin + window.location.pathname;
+      window.history.replaceState({}, document.title, cleanUrl);
+      
+      // Redirecionar para login após 3 segundos
+      setTimeout(() => {
+        setView('login');
+      }, 3000);
+    } catch (error: any) {
+      setErrorMessage(error.message || 'Erro ao definir senha.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // ... (resto do código da página permanece igual)
+};
+
+
 
   const LandingPage = () => (
     <div className="landing-multi-font min-h-screen bg-white flex flex-col">
@@ -1678,145 +1857,230 @@ export default function App() {
         </div>
       </main>
 
+      
       {(isTaskModalOpen || editingTaskId) && (() => {
-        const editTask = editingTaskId ? tasks.find(t => t.id === editingTaskId) : null;
-        const respIds = editTask ? [editTask.responsibleId, ...(editTask.intervenientes || [])] : [];
-        return (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-[100] flex items-center justify-center p-4 sm:p-6 overflow-y-auto py-8 animate-in">
-           <div className="bg-white dark:bg-slate-900 w-full max-w-3xl max-h-[90vh] overflow-y-auto rounded-2xl p-5 sm:p-6 border border-slate-100 dark:border-slate-800 shadow-2xl relative my-auto">
-              <button onClick={() => { setIsTaskModalOpen(false); setEditingTaskId(null); setTaskFormDeliveryPreview(''); setTaskFormError(null); }} className="absolute top-3 right-3 sm:top-4 sm:right-4 p-2 text-slate-300 hover:text-rose-500 transition-colors z-10"><X size={18} className="sm:w-5 sm:h-5"/></button>
-              <h2 className="text-lg sm:text-xl font-black tracking-tighter mb-4 uppercase text-slate-800 dark:text-white">{editTask ? 'Editar Tarefa' : 'Nova Actividade'}</h2>
-              {taskFormError && (
-                <div className="mb-4 p-3 bg-rose-50 border border-rose-200 rounded-lg">
-                  <div className="flex items-start gap-2">
-                    <AlertTriangle className="text-rose-500 mt-0.5 flex-shrink-0" size={16} />
-                    <p className="text-rose-700 text-sm">{taskFormError}</p>
-                  </div>
-                </div>
-              )}
-              <form id="taskForm" className="grid grid-cols-1 md:grid-cols-2 gap-2 sm:gap-3" onSubmit={async (e) => {
-                e.preventDefault();
-                const fd = new FormData(e.target as HTMLFormElement);
-                const ids = fd.getAll('responsibleIds') as string[];
-                if (!ids || ids.length === 0) { setTaskFormError('Selecione pelo menos um responsável.'); return; }
-                setTaskFormError(null);
-                const start = fd.get('startDate') as string;
-                const val = Number(fd.get('deadlineValue'));
-                const type = (fd.get('deadlineType') as 'days'|'hours') || 'days';
-                
-                // Para o backend Spring Boot, sempre usar days
-                const daysToFinish = type === 'days' ? val : Math.ceil(val / 24);
+  const editTask = editingTaskId ? tasks.find(t => t.id === editingTaskId) : null;
+  const respIds = editTask ? [editTask.responsibleId, ...(editTask.intervenientes || [])] : [];
+  
+  return (
+    <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-[100] flex items-center justify-center p-4 sm:p-6 overflow-y-auto py-8 animate-in">
+      <div className="bg-white dark:bg-slate-900 w-full max-w-3xl max-h-[90vh] overflow-y-auto rounded-2xl p-5 sm:p-6 border border-slate-100 dark:border-slate-800 shadow-2xl relative my-auto">
+        <button onClick={() => { setIsTaskModalOpen(false); setEditingTaskId(null); setTaskFormDeliveryPreview(''); setTaskFormError(null); }} className="absolute top-3 right-3 sm:top-4 sm:right-4 p-2 text-slate-300 hover:text-rose-500 transition-colors z-10">
+          <X size={18} className="sm:w-5 sm:h-5"/>
+        </button>
+        
+        <h2 className="text-lg sm:text-xl font-black tracking-tighter mb-4 uppercase text-slate-800 dark:text-white">
+          {editTask ? 'Editar Tarefa' : 'Nova Actividade'}
+        </h2>
+        
+        {taskFormError && (
+          <div className="mb-4 p-3 bg-rose-50 border border-rose-200 rounded-lg">
+            <div className="flex items-start gap-2">
+              <AlertTriangle className="text-rose-500 mt-0.5 flex-shrink-0" size={16} />
+              <p className="text-rose-700 text-sm">{taskFormError}</p>
+            </div>
+          </div>
+        )}
+        
+        <form id="taskForm" className="grid grid-cols-1 md:grid-cols-2 gap-2 sm:gap-3" onSubmit={async (e) => {
+          e.preventDefault();
+          const fd = new FormData(e.target as HTMLFormElement);
+          const ids = fd.getAll('responsibleIds') as string[];
+          
+          if (!ids || ids.length === 0) { 
+            setTaskFormError('Selecione pelo menos um responsável.'); 
+            return; 
+          }
+          
+          setTaskFormError(null);
+          const start = fd.get('startDate') as string;
+          const val = Number(fd.get('deadlineValue'));
+          const type = (fd.get('deadlineType') as 'days'|'hours') || 'days';
+          
+          // Para o backend Spring Boot, sempre usar days
+          const daysToFinish = type === 'days' ? val : Math.ceil(val / 24);
 
-                if (editTask) {
-                  // Atualizar tarefa existente
-                  const updated = tasks.map(t => t.id === editTask.id ? { 
-                    ...t, 
-                    title: fd.get('title') as string, 
-                    description: fd.get('description') as string, 
-                    startDate: start, 
-                    deadlineValue: val, 
-                    deadlineType: type, 
-                    deliveryDate: new Date(start).toISOString(), // Será recalculado pelo backend
-                    responsibleId: ids[0], 
-                    intervenientes: ids.slice(1), 
-                    updatedAt: new Date().toISOString() 
-                  } : t);
-                  
-                  try {
-                    const taskToUpdate = updated.find(t => t.id === editTask.id)!;
-                    const apiResponse = await apiTasks.update(editTask.id, taskToUpdate);
-                    if (apiResponse && apiResponse.id) {
-                      const mappedTask = mapTaskFromAPI(apiResponse);
-                      saveTasks(updated.map(t => t.id === editTask.id ? mappedTask : t));
-                      console.log('Tarefa atualizada:', mappedTask);
-                    } else {
-                      saveTasks(updated);
-                    }
-                    addNotification(user!.id, 'Tarefa atualizada com sucesso.', 'success');
-                  } catch (error) {
-                    console.error('Erro ao atualizar tarefa:', error);
-                    addNotification(user!.id, 'Não foi possível atualizar na API.', 'error');
-                    return;
-                  }
-                  
-                  addSystemActivity({ userId: user!.id, userName: user!.name, action: 'updated', entityType: 'task', entityId: editTask.id, entityTitle: fd.get('title') as string });
-                  setEditingTaskId(null); setIsTaskModalOpen(false);
-                } else {
-                  // Criar nova tarefa
-                  try {
-                    const payload = { 
-                      title: fd.get('title') as string, 
-                      description: fd.get('description') as string, 
-                      startDate: start, 
-                      deadlineValue: daysToFinish, 
-                      deadlineType: 'days', // Sempre days para o backend
-                      responsibles: ids.map(id => Number(id)),
-                      status: 'PENDENTE'
-                    };
-                    const apiResponse = await apiTasks.create(payload);
-                    if (!apiResponse || !apiResponse.id) {
-                      throw new Error('Resposta inválida da API.');
-                    }
-                    const mappedTask = mapTaskFromAPI(apiResponse);
-                    saveTasks([mappedTask, ...tasks]);
-                    console.log('Tarefa criada:', mappedTask);
-                    addSystemActivity({ userId: user!.id, userName: user!.name, action: 'created', entityType: 'task', entityId: mappedTask.id, entityTitle: mappedTask.title });
-                    addNotification(user!.id, 'Tarefa criada com sucesso.', 'success');
-                  } catch (error) {
-                    console.error('Erro ao criar tarefa:', error);
-                    addNotification(user!.id, 'Não foi possível criar na API.', 'error');
-                    return;
-                  }
-                  
-                  setIsTaskModalOpen(false);
+          if (editTask) {
+            // Atualizar tarefa existente
+            const updated = tasks.map(t => t.id === editTask.id ? { 
+              ...t, 
+              title: fd.get('title') as string, 
+              description: fd.get('description') as string, 
+              startDate: start, 
+              deadlineValue: val, 
+              deadlineType: type, 
+              deliveryDate: new Date(start).toISOString(),
+              responsibleId: ids[0], 
+              intervenientes: ids.slice(1), 
+              updatedAt: new Date().toISOString() 
+            } : t);
+            
+            try {
+              const taskToUpdate = updated.find(t => t.id === editTask.id)!;
+              const apiResponse = await apiTasks.update(editTask.id, taskToUpdate);
+              if (apiResponse && apiResponse.id) {
+                const mappedTask = mapTaskFromAPI(apiResponse);
+                saveTasks(updated.map(t => t.id === editTask.id ? mappedTask : t));
+                console.log('Tarefa atualizada:', mappedTask);
+              } else {
+                saveTasks(updated);
+              }
+              addNotification(user!.id, 'Tarefa atualizada com sucesso.', 'success');
+            } catch (error) {
+              console.error('Erro ao atualizar tarefa:', error);
+              addNotification(user!.id, 'Não foi possível atualizar na API.', 'error');
+              return;
+            }
+            
+            addSystemActivity({ 
+              userId: user!.id, 
+              userName: user!.name, 
+              action: 'updated', 
+              entityType: 'task', 
+              entityId: editTask.id, 
+              entityTitle: fd.get('title') as string 
+            });
+            setEditingTaskId(null); 
+            setIsTaskModalOpen(false);
+          } else {
+            // ========== CORREÇÃO AQUI ==========
+            // Criar nova tarefa com múltiplos responsáveis (endpoint ADMIN)
+            try {
+              // Converter IDs para números e validar
+              const numericIds = ids.map(id => {
+                const numId = Number(id);
+                if (isNaN(numId)) {
+                  throw new Error(`ID inválido: ${id}`);
                 }
-                setTaskFormDeliveryPreview('');
-              }}>
-                <div className="md:col-span-2 space-y-1">
-                  <label className="text-[8px] font-black uppercase text-slate-400 tracking-widest ml-1">{t.title}</label>
-                  <input name="title" defaultValue={editTask?.title} className="w-full px-3 py-1.5 bg-slate-50 dark:bg-slate-800 border-none rounded-lg outline-none focus:ring-2 focus:ring-emerald-500/30 font-bold text-xs" required />
-                </div>
-                <div className="md:col-span-2 space-y-1">
-                  <label className="text-[8px] font-black uppercase text-slate-400 tracking-widest ml-1">{t.description}</label>
-                  <textarea name="description" defaultValue={editTask?.description} rows={2} className="w-full px-3 py-1.5 bg-slate-50 dark:bg-slate-800 border-none rounded-lg outline-none focus:ring-2 focus:ring-emerald-500/30 font-medium resize-none text-xs" required />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-[8px] font-black uppercase text-slate-400 tracking-widest ml-1">{t.startDate}</label>
-                  <input name="startDate" type="datetime-local" defaultValue={editTask?.startDate?.slice(0,16)} onInput={(e)=>recalcDelivery((e.target as HTMLInputElement).form!)} className="w-full px-3 py-1.5 bg-slate-50 dark:bg-slate-800 border-none rounded-lg outline-none focus:ring-2 focus:ring-emerald-500/30 font-bold text-xs" required />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-[8px] font-black uppercase text-slate-400 tracking-widest ml-1">Duração</label>
-                  <div className="flex gap-1.5">
-                    <input name="deadlineValue" type="number" defaultValue={editTask?.deadlineValue ?? 1} min={1} onInput={(e)=>recalcDelivery((e.target as HTMLInputElement).form!)} className="flex-1 px-3 py-1.5 bg-slate-50 dark:bg-slate-800 border-none rounded-lg outline-none focus:ring-2 focus:ring-emerald-500/30 font-bold text-xs" required />
-                    <select name="deadlineType" defaultValue={editTask?.deadlineType} onChange={(e)=>recalcDelivery((e.target as HTMLSelectElement).form!)} className="px-3 py-1.5 bg-slate-50 dark:bg-slate-800 border-none rounded-lg outline-none focus:ring-2 focus:ring-emerald-500/30 font-bold text-xs">
-                      <option value="days">{t.days}</option>
-                      <option value="hours">{t.hours}</option>
-                    </select>
-                  </div>
-                </div>
-                <div className="md:col-span-2 space-y-1">
-                  <label className="text-[8px] font-black uppercase text-slate-400 tracking-widest ml-1">{t.deliveryDate} (calculada)</label>
-                  <div className="px-3 py-1.5 bg-emerald-50 dark:bg-emerald-900/20 rounded-lg font-bold text-[#10b981] text-xs">{taskFormDeliveryPreview || (editTask ? new Date(editTask.deliveryDate).toLocaleString('pt-PT', { dateStyle: 'short', timeStyle: 'short' }) : '—')}</div>
-                </div>
-                <div className="md:col-span-2 space-y-1">
-                  <label className="text-[8px] font-black uppercase text-slate-400 tracking-widest ml-1">{t.responsibles} (múltipla escolha)</label>
-                  <div className="flex flex-wrap gap-1.5 p-2 bg-slate-50 dark:bg-slate-800 rounded-lg max-h-24 overflow-y-auto">
-                    {users.map(u => (
-                      <label key={u.id} className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-white dark:bg-slate-700 cursor-pointer hover:bg-emerald-50 dark:hover:bg-emerald-900/20 text-xs">
-                        <input type="checkbox" name="responsibleIds" value={u.id} defaultChecked={respIds.includes(u.id)} className="rounded" />
-                        <span className="font-bold">{u.name}</span>
-                      </label>
-                    ))}
-                  </div>
-                </div>
-                <div className="md:col-span-2 pt-1">
-                  <Button type="submit" className="w-full py-2 rounded-lg bg-[#10b981] shadow-emerald-500/20 shadow-lg text-xs uppercase tracking-[0.1em]">{editTask ? 'Guardar' : 'Criar'}</Button>
-                </div>
-              </form>
-           </div>
-        </div>
-        );
-      })()}
+                return numId;
+              });
+              
+              console.log('📤 Dados da tarefa a ser criada:');
+              console.log('Título:', fd.get('title'));
+              console.log('Descrição:', fd.get('description'));
+              console.log('Dias para finalizar:', daysToFinish);
+              console.log('Responsáveis IDs:', ids);
+              console.log('Responsáveis IDs (numérico):', numericIds);
+              
+              // Preparar o payload no formato que o backend espera
+              const payload = { 
+                title: fd.get('title') as string, 
+                description: fd.get('description') as string, 
+                daysToFinish: daysToFinish, // ❗ Campo correto: daysToFinish
+                status: 'PENDENTE',
+                responsibles: numericIds // ❗ Array de números
+              };
+              
+              console.log('📤 Enviando payload:', payload);
+              
+              // Usar a API ADMIN que suporta múltiplos responsáveis
+              const apiResponse = await apiAdminTasks.createWithResponsibles(payload);
+              
+              console.log('📥 Resposta da API:', apiResponse);
+              
+              if (!apiResponse || !apiResponse.task) {
+                console.error('❌ Resposta da API inválida:', apiResponse);
+                throw new Error('Resposta inválida da API.');
+              }
+              
+              const mappedTask = mapTaskFromAPI(apiResponse.task);
+              saveTasks([mappedTask, ...tasks]);
+              console.log('✅ Tarefa criada:', mappedTask);
+              
+              addSystemActivity({ 
+                userId: user!.id, 
+                userName: user!.name, 
+                action: 'created', 
+                entityType: 'task', 
+                entityId: mappedTask.id, 
+                entityTitle: mappedTask.title 
+              });
+              addNotification(user!.id, 'Tarefa criada com sucesso.', 'success');
+              
+            } catch (error: any) {
+              console.error('❌ Erro ao criar tarefa:', error);
+              logger.error('Task', 'Erro ao criar tarefa na API', error);
+              
+              // Mensagem de erro mais específica
+              let errorMsg = 'Não foi possível criar na API.';
+              if (error.message?.includes('400') || error.message?.includes('Bad Request')) {
+                errorMsg = 'Formato de dados inválido. Verifique os responsáveis.';
+              } else if (error.message?.includes('Formato de responsável inválido')) {
+                errorMsg = 'Formato dos responsáveis inválido. Certifique-se de que são IDs numéricos.';
+              } else if (error.message?.includes('401') || error.message?.includes('Unauthorized')) {
+                errorMsg = 'Acesso não autorizado. Faça login novamente.';
+              } else if (error.message?.includes('409') || error.message?.includes('Conflict')) {
+                errorMsg = 'Conflito de dados. Verifique se a tarefa já existe.';
+              }
+              
+              setTaskFormError(errorMsg);
+              addNotification(user!.id, errorMsg, 'error');
+              return;
+            }
+            
+            setIsTaskModalOpen(false);
+          }
+          setTaskFormDeliveryPreview('');
+        }}>
+          {/* Campos do formulário permanecem os mesmos */}
+          <div className="md:col-span-2 space-y-1">
+            <label className="text-[8px] font-black uppercase text-slate-400 tracking-widest ml-1">{t.title}</label>
+            <input name="title" defaultValue={editTask?.title} className="w-full px-3 py-1.5 bg-slate-50 dark:bg-slate-800 border-none rounded-lg outline-none focus:ring-2 focus:ring-emerald-500/30 font-bold text-xs" required />
+          </div>
+          
+          <div className="md:col-span-2 space-y-1">
+            <label className="text-[8px] font-black uppercase text-slate-400 tracking-widest ml-1">{t.description}</label>
+            <textarea name="description" defaultValue={editTask?.description} rows={2} className="w-full px-3 py-1.5 bg-slate-50 dark:bg-slate-800 border-none rounded-lg outline-none focus:ring-2 focus:ring-emerald-500/30 font-medium resize-none text-xs" required />
+          </div>
+          
+          <div className="space-y-1">
+            <label className="text-[8px] font-black uppercase text-slate-400 tracking-widest ml-1">{t.startDate}</label>
+            <input name="startDate" type="datetime-local" defaultValue={editTask?.startDate?.slice(0,16)} onInput={(e)=>recalcDelivery((e.target as HTMLInputElement).form!)} className="w-full px-3 py-1.5 bg-slate-50 dark:bg-slate-800 border-none rounded-lg outline-none focus:ring-2 focus:ring-emerald-500/30 font-bold text-xs" required />
+          </div>
+          
+          <div className="space-y-1">
+            <label className="text-[8px] font-black uppercase text-slate-400 tracking-widest ml-1">Duração</label>
+            <div className="flex gap-1.5">
+              <input name="deadlineValue" type="number" defaultValue={editTask?.deadlineValue ?? 1} min={1} onInput={(e)=>recalcDelivery((e.target as HTMLInputElement).form!)} className="flex-1 px-3 py-1.5 bg-slate-50 dark:bg-slate-800 border-none rounded-lg outline-none focus:ring-2 focus:ring-emerald-500/30 font-bold text-xs" required />
+              <select name="deadlineType" defaultValue={editTask?.deadlineType} onChange={(e)=>recalcDelivery((e.target as HTMLSelectElement).form!)} className="px-3 py-1.5 bg-slate-50 dark:bg-slate-800 border-none rounded-lg outline-none focus:ring-2 focus:ring-emerald-500/30 font-bold text-xs">
+                <option value="days">{t.days}</option>
+                <option value="hours">{t.hours}</option>
+              </select>
+            </div>
+          </div>
+          
+          <div className="md:col-span-2 space-y-1">
+            <label className="text-[8px] font-black uppercase text-slate-400 tracking-widest ml-1">{t.deliveryDate} (calculada)</label>
+            <div className="px-3 py-1.5 bg-emerald-50 dark:bg-emerald-900/20 rounded-lg font-bold text-[#10b981] text-xs">
+              {taskFormDeliveryPreview || (editTask ? new Date(editTask.deliveryDate).toLocaleString('pt-PT', { dateStyle: 'short', timeStyle: 'short' }) : '—')}
+            </div>
+          </div>
+          
+          <div className="md:col-span-2 space-y-1">
+            <label className="text-[8px] font-black uppercase text-slate-400 tracking-widest ml-1">{t.responsibles} (múltipla escolha)</label>
+            <div className="flex flex-wrap gap-1.5 p-2 bg-slate-50 dark:bg-slate-800 rounded-lg max-h-24 overflow-y-auto">
+              {users.map(u => (
+                <label key={u.id} className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-white dark:bg-slate-700 cursor-pointer hover:bg-emerald-50 dark:hover:bg-emerald-900/20 text-xs">
+                  <input type="checkbox" name="responsibleIds" value={u.id} defaultChecked={respIds.includes(u.id)} className="rounded" />
+                  <span className="font-bold">{u.name}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+          
+          <div className="md:col-span-2 pt-1">
+            <Button type="submit" className="w-full py-2 rounded-lg bg-[#10b981] shadow-emerald-500/20 shadow-lg text-xs uppercase tracking-[0.1em]">
+              {editTask ? 'Guardar' : 'Criar'}
+            </Button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+})()}
+
+
+
 
       {isAddUserOpen && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-[100] flex items-center justify-center p-4">
