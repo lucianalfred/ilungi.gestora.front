@@ -104,6 +104,8 @@ export const TRANSLATIONS = {
     completed: 'Concluídas',
     overdue: 'Em atraso',
     complianceRate: 'Taxa cumprimento'
+
+
   },
   en: {
     // Navigation
@@ -176,7 +178,9 @@ export const TRANSLATIONS = {
     total: 'Total',
     completed: 'Completed',
     overdue: 'Overdue',
-    complianceRate: 'Compliance Rate'
+    complianceRate: 'Compliance Rate',
+    tasksByStatus: 'Tasks by Status',
+      
   }
 };
 
