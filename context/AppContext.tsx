@@ -1,4 +1,6 @@
+// src/context/AppContext.tsx
 import React, { createContext, useState, useEffect, useMemo, useRef } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { 
   User, Task, Notification, SystemActivity, 
   UserRole, TaskStatus 
@@ -8,9 +10,11 @@ import { setAuthToken as setGlobalAuthToken } from '../services/apiService';
 import { getSmartNotification } from '../services/geminiService';
 import { logger } from '../services/logger';
 import { mapUserFromAPI, mapTaskFromAPI, mapCommentFromAPI } from '../services/apiService';
+import { StatusOrder } from '../constants/index';
 
-import { StatusOrder, TRANSLATIONS, STORAGE_KEYS } from '../constants/index';
-
+// ============================================
+// TIPO DO CONTEXTO
+// ============================================
 interface AppContextType {
   // State
   user: User | null;
@@ -48,6 +52,7 @@ interface AppContextType {
   updateTask: (taskId: string, taskData: any) => Promise<void>;
   deleteTask: (task: Task) => Promise<void>;
   handleAdvanceStatus: (task: Task) => Promise<void>;
+  handleRegressStatus: (task: Task) => Promise<void>;
   handleDeleteTask: (task: Task) => Promise<void>;
   addComment: (taskId: string, text: string) => Promise<void>;
   filterTasks: (filters: { search?: string; status?: string }) => void;
@@ -75,9 +80,53 @@ interface AppContextType {
   openAvatarUpload: (userId: string) => void;
 }
 
+// ============================================
+// CHAVES PARA REACT QUERY
+// ============================================
+export const taskKeys = {
+  all: ['tasks'] as const,
+  lists: () => [...taskKeys.all, 'list'] as const,
+  list: (filters: any) => [...taskKeys.lists(), filters] as const,
+};
+
+export const userKeys = {
+  all: ['users'] as const,
+  lists: () => [...userKeys.all, 'list'] as const,
+};
+
+// ============================================
+// FUNÇÕES AUXILIARES PARA STATUS
+// ============================================
+const statusFlow: TaskStatus[] = [
+  TaskStatus.PENDENTE,
+  TaskStatus.EM_PROGRESSO,
+  TaskStatus.TERMINADO,
+  TaskStatus.FECHADO
+];
+
+const getNextStatus = (currentStatus: TaskStatus | string): string => {
+  const index = statusFlow.indexOf(currentStatus as TaskStatus);
+  if (index === -1 || index === statusFlow.length - 1) return currentStatus as string;
+  return statusFlow[index + 1];
+};
+
+const getPreviousStatus = (currentStatus: TaskStatus | string): string => {
+  const index = statusFlow.indexOf(currentStatus as TaskStatus);
+  if (index <= 0) return currentStatus as string;
+  return statusFlow[index - 1];
+};
+
+// ============================================
+// CRIAÇÃO DO CONTEXTO
+// ============================================
 export const AppContext = createContext<AppContextType | undefined>(undefined);
 
+// ============================================
+// PROVIDER COMPONENT
+// ============================================
 export const AppProvider = ({ children }: { children: React.ReactNode }) => {
+  const queryClient = useQueryClient();
+  
   // ============ STATE DECLARATIONS ============
   const [user, setUser] = useState<User | null>(null);
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -96,6 +145,171 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
   
   const avatarInputRef = useRef<HTMLInputElement>(null);
   const lastNotificationRef = useRef<Map<string, number>>(new Map());
+
+  // ============ REACT QUERY HOOKS ============
+  
+  // Query para buscar tasks automaticamente
+  const { data: queryTasks = [], refetch: refetchTasks } = useQuery({
+    queryKey: taskKeys.list({}),
+    queryFn: async () => {
+      if (!user) return [];
+      
+      try {
+        const isAdmin = user?.role === UserRole.ADMIN;
+        const response = isAdmin 
+          ? await apiAdminTasks.getAll()
+          : await apiTasks.getMyTasks();
+        
+        const tasksList = Array.isArray(response) 
+          ? response 
+          : (response.data || response.tasks || []);
+        
+        return tasksList.map((t: any) => mapTaskFromAPI(t));
+      } catch (error) {
+        console.error('Erro ao buscar tasks:', error);
+        return [];
+      }
+    },
+    // ATUALIZAÇÃO AUTOMÁTICA - chave para o que você quer
+    refetchInterval: 1000, // Atualiza a cada 30 segundos
+    staleTime: 1000, // 10 segundos
+    enabled: !!user, // Só executa se tiver usuário logado
+  });
+
+  // Query para buscar usuários automaticamente
+  const { data: queryUsers = [], refetch: refetchUsers } = useQuery({
+    queryKey: userKeys.lists(),
+    queryFn: async () => {
+      if (!user || user.role !== UserRole.ADMIN) return [];
+      
+      try {
+        const response = await apiAdminUsers.getAll();
+        const usersList = Array.isArray(response) ? response : (response.data || response.users || []);
+        return usersList.map((u: any) => mapUserFromAPI(u));
+      } catch (error) {
+        console.error('Erro ao buscar usuários:', error);
+        return [];
+      }
+    },
+    enabled: user?.role === UserRole.ADMIN,
+    refetchInterval: 60000, // Atualiza a cada minuto
+  });
+
+  // Mutation para avançar status
+  const advanceMutation = useMutation({
+    mutationFn: async (task: Task) => {
+      const nextStatus = getNextStatus(task.status);
+      return apiTasks.updateStatus(task.id, nextStatus);
+    },
+    onMutate: async (task) => {
+      await queryClient.cancelQueries({ queryKey: taskKeys.lists() });
+      const previousTasks = queryClient.getQueryData(taskKeys.lists());
+
+      queryClient.setQueryData(taskKeys.lists(), (old: any) => {
+        if (!Array.isArray(old)) return old;
+        return old.map((t: Task) => 
+          t.id === task.id 
+            ? { ...t, status: getNextStatus(t.status) }
+            : t
+        );
+      });
+
+      return { previousTasks };
+    },
+    onError: (err, task, context) => {
+      queryClient.setQueryData(taskKeys.lists(), context?.previousTasks);
+      addNotification(user!.id, 'Erro ao avançar status', 'error');
+    },
+    onSuccess: (data, task) => {
+      addNotification(user!.id, `Tarefa avançada com sucesso`, 'success');
+      addSystemActivity({
+        userId: user!.id,
+        userName: user!.name,
+        action: 'status_changed',
+        entityType: 'task',
+        entityId: task.id,
+        entityTitle: task.title,
+        fromStatus: task.status,
+        toStatus: getNextStatus(task.status)
+      });
+    },
+  });
+
+  // Mutation para recuar status
+  const regressMutation = useMutation({
+    mutationFn: async (task: Task) => {
+      const prevStatus = getPreviousStatus(task.status);
+      return apiTasks.updateStatus(task.id, prevStatus);
+    },
+    onMutate: async (task) => {
+      await queryClient.cancelQueries({ queryKey: taskKeys.lists() });
+      const previousTasks = queryClient.getQueryData(taskKeys.lists());
+
+      queryClient.setQueryData(taskKeys.lists(), (old: any) => {
+        if (!Array.isArray(old)) return old;
+        return old.map((t: Task) => 
+          t.id === task.id 
+            ? { ...t, status: getPreviousStatus(t.status) }
+            : t
+        );
+      });
+
+      return { previousTasks };
+    },
+    onError: (err, task, context) => {
+      queryClient.setQueryData(taskKeys.lists(), context?.previousTasks);
+      addNotification(user!.id, 'Erro ao recuar status', 'error');
+    },
+    onSuccess: (data, task) => {
+      addNotification(user!.id, `Tarefa recuada com sucesso`, 'info');
+    },
+  });
+
+  // Mutation para deletar task
+  const deleteMutation = useMutation({
+    mutationFn: (taskId: string) => apiTasks.delete(taskId),
+    onMutate: async (taskId) => {
+      await queryClient.cancelQueries({ queryKey: taskKeys.lists() });
+      const previousTasks = queryClient.getQueryData(taskKeys.lists());
+
+      queryClient.setQueryData(taskKeys.lists(), (old: any) => {
+        if (!Array.isArray(old)) return old;
+        return old.filter((t: Task) => t.id !== taskId);
+      });
+
+      return { previousTasks };
+    },
+    onError: (err, taskId, context) => {
+      queryClient.setQueryData(taskKeys.lists(), context?.previousTasks);
+      addNotification(user!.id, 'Erro ao deletar tarefa', 'error');
+    },
+    onSuccess: (data, taskId) => {
+      addNotification(user!.id, 'Tarefa deletada com sucesso', 'success');
+    },
+  });
+
+  // Mutation para adicionar comentário
+  const commentMutation = useMutation({
+    mutationFn: ({ taskId, text }: { taskId: string; text: string }) => 
+      apiComments.create(taskId, text),
+    onSuccess: async (response, { taskId, text }) => {
+      await queryClient.invalidateQueries({ queryKey: taskKeys.lists() });
+      addNotification(user!.id, 'Comentário adicionado', 'success');
+    },
+  });
+
+  // Sincroniza o estado do contexto com o React Query
+  useEffect(() => {
+    if (queryTasks.length > 0) {
+      setTasks(queryTasks);
+    }
+  }, [queryTasks]);
+
+  useEffect(() => {
+    if (queryUsers.length > 0) {
+      setUsers(queryUsers);
+    }
+  }, [queryUsers]);
 
   // ============ FILTERED TASKS ============
   const filteredTasks = useMemo(() => {
@@ -124,16 +338,22 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
 
   // ============ AUTH METHODS ============
   const login = async (email: string, password: string, rememberMe?: boolean) => {
+    console.log('🔐 [AppContext] Iniciando login para:', email);
+    
     setIsLoading(true);
     try {
       const apiResponse = await apiAuth.login(email, password);
+      console.log('📥 [AppContext] Resposta da API:', apiResponse);
+      
       const token = apiResponse.token || apiResponse.jwt;
-
       if (!token) {
         throw new Error('Resposta de login sem token.');
       }
 
       setGlobalAuthToken(token);
+      if (rememberMe) {
+        localStorage.setItem('gestora_remember_email', email);
+      }
       
       const apiUser = apiResponse.user || apiResponse;
       const normalizedUser = {
@@ -145,9 +365,15 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
       };
       
       const mappedUser = mapUserFromAPI(normalizedUser);
+      console.log('👤 [AppContext] Usuário mapeado:', mappedUser);
+      
       setUser(mappedUser);
       
-      await loadDataFromAPI(mappedUser);
+      // Força o recarregamento das queries
+      await refetchTasks();
+      if (mappedUser.role === UserRole.ADMIN) {
+        await refetchUsers();
+      }
       
       if (mappedUser.mustChangePassword) {
         setView('app');
@@ -155,8 +381,11 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
       } else {
         setView('app');
       }
+      
+      console.log('✅ [AppContext] Login concluído com sucesso');
+      
     } catch (error: any) {
-      logger.error('Auth', 'Login na API falhou', error);
+      console.error('❌ [AppContext] Erro no login:', error);
       setGlobalAuthToken(null);
       setUser(null);
       throw error;
@@ -166,20 +395,29 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
   };
 
   const logout = () => {
+    console.log('🚪 [AppContext] Fazendo logout');
     setGlobalAuthToken(null);
     setUser(null);
     setTasks([]);
     setUsers([]);
     setSystemActivities([]);
+    setNotifications([]);
     setView('login');
+    setActiveTab('dashboard');
+    localStorage.removeItem('gestora_remember_email');
+    
+    // Limpa o cache do React Query
+    queryClient.clear();
   };
 
   const register = async (email: string, name: string, password: string) => {
+    console.log('📝 [AppContext] Registrando:', email);
     setIsLoading(true);
     try {
       const response = await apiAuth.register(email, name, password);
+      console.log('✅ [AppContext] Registro bem-sucedido:', response);
       
-      // Auto login after registration
+      // Auto login após 2 segundos
       setTimeout(async () => {
         try {
           await login(email, password);
@@ -190,6 +428,7 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
       
       return response;
     } catch (error: any) {
+      console.error('❌ [AppContext] Erro no registro:', error);
       throw new Error(error.message || 'Erro ao criar conta. Tente novamente.');
     } finally {
       setIsLoading(false);
@@ -241,6 +480,7 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
 
   // ============ TASK METHODS ============
   const createTask = async (taskData: any) => {
+    console.log('📋 [AppContext] Criando tarefa:', taskData);
     try {
       const numericIds = taskData.responsibles.map((id: string) => Number(id));
       const payload = { 
@@ -257,16 +497,16 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
         throw new Error('Resposta inválida da API.');
       }
       
-      const mappedTask = mapTaskFromAPI(apiResponse.task);
-      setTasks([mappedTask, ...tasks]);
+      // Força o recarregamento das tasks
+      await refetchTasks();
       
       addSystemActivity({ 
         userId: user!.id, 
         userName: user!.name, 
         action: 'created', 
         entityType: 'task', 
-        entityId: mappedTask.id, 
-        entityTitle: mappedTask.title 
+        entityId: apiResponse.task.id, 
+        entityTitle: taskData.title 
       });
       
       addNotification(user!.id, 'Tarefa criada com sucesso.', 'success');
@@ -278,24 +518,13 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
   };
 
   const updateTask = async (taskId: string, taskData: any) => {
+    console.log('✏️ [AppContext] Atualizando tarefa:', taskId, taskData);
     try {
-      const updatedTasks = tasks.map(t => 
-        t.id === taskId ? { 
-          ...t, 
-          ...taskData,
-          updatedAt: new Date().toISOString() 
-        } : t
-      );
+      const taskToUpdate = tasks.find(t => t.id === taskId)!;
+      const apiResponse = await apiTasks.update(taskId, { ...taskToUpdate, ...taskData });
       
-      const taskToUpdate = updatedTasks.find(t => t.id === taskId)!;
-      const apiResponse = await apiTasks.update(taskId, taskToUpdate);
-      
-      if (apiResponse && apiResponse.id) {
-        const mappedTask = mapTaskFromAPI(apiResponse);
-        setTasks(updatedTasks.map(t => t.id === taskId ? mappedTask : t));
-      } else {
-        setTasks(updatedTasks);
-      }
+      // Força o recarregamento das tasks
+      await refetchTasks();
       
       addNotification(user!.id, 'Tarefa atualizada com sucesso.', 'success');
       
@@ -315,9 +544,12 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
   };
 
   const deleteTask = async (task: Task) => {
+    console.log('🗑️ [AppContext] Deletando tarefa:', task.id);
     try {
       await apiTasks.delete(task.id);
-      setTasks(tasks.filter(t => t.id !== task.id));
+      
+      // Força o recarregamento das tasks
+      await refetchTasks();
       
       addSystemActivity({ 
         userId: user!.id, 
@@ -337,140 +569,73 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
     }
   };
 
-  const handleDeleteTask = async (task: Task) => {
-    if (!window.confirm(`Deseja eliminar a tarefa "${task.title}"? Esta ação não pode ser desfeita.`)) {
-      return;
-    }
-    await deleteTask(task);
-  };
-
+  // ============ STATUS HANDLERS (USANDO REACT QUERY) ============
   const handleAdvanceStatus = async (task: Task) => {
-    let currentStatus: TaskStatus;
-    
-    if (task.status === 'ABERTO' as any) {
-      currentStatus = TaskStatus.PENDENTE;
-    } else {
-      const validStatus = Object.values(TaskStatus).includes(task.status as TaskStatus);
-      if (!validStatus) {
-        addNotification(user!.id, `Status inválido: ${task.status}`, 'error');
-        return;
-      }
-      currentStatus = task.status as TaskStatus;
-    }
-    
-    const currentIndex = StatusOrder.indexOf(currentStatus);
-    const nextStatus = StatusOrder[currentIndex + 1];
-    
-    if (!nextStatus) return;
-    
+    console.log('🔄 handleAdvanceStatus chamado:', {
+      taskId: task.id,
+      currentStatus: task.status,
+      userRole: user?.role,
+    });
+
+    // Verificar permissões
     const isTaskMember = task.responsibleId === user?.id || task.intervenientes?.includes(user?.id as string);
     
-    if (user?.role === UserRole.EMPLOYEE && !isTaskMember) return;
-    
-    if (task.status === TaskStatus.TERMINADO && user?.role !== UserRole.ADMIN) return;
-
-    try {
-      const backendStatus = nextStatus;
-      const response = await apiTasks.updateStatus(task.id, backendStatus);
-      
-      const updatedTask = response ? mapTaskFromAPI(response) : { 
-        ...task, 
-        status: nextStatus, 
-        updatedAt: new Date().toISOString(),
-        closedAt: nextStatus === TaskStatus.TERMINADO ? new Date().toISOString() : task.closedAt
-      };
-      
-      setTasks(tasks.map(tk => tk.id === task.id ? { ...tk, ...updatedTask } : tk));
-      
-      if (user?.role === UserRole.EMPLOYEE) {
-        try {
-          await apiComments.create(task.id, `Avançou o estado para ${nextStatus}`);
-        } catch (commentError) {
-          logger.warn('Comment', 'Erro ao criar comentário automático na API', commentError);
-        }
-      }
-      
-      addSystemActivity({ 
-        userId: user!.id, 
-        userName: user!.name, 
-        action: 'status_changed', 
-        entityType: 'task', 
-        entityId: task.id, 
-        entityTitle: task.title, 
-        fromStatus: task.status, 
-        toStatus: nextStatus 
-      });
-      
-      try {
-        const aiMsg = await getSmartNotification(task.title, nextStatus, false, false, lang);
-        addNotification(task.responsibleId, aiMsg, nextStatus === TaskStatus.TERMINADO ? 'success' : 'info');
-      } catch (aiError) {
-        console.error('Erro na notificação AI:', aiError);
-      }
-      
-    } catch (error: any) {
-      logger.warn('Task', 'Erro ao atualizar status na API', error);
-      
-      let errorMessage = 'Não foi possível atualizar o estado na API.';
-      if (error.message?.includes('400')) errorMessage = 'Status inválido.';
-      if (error.message?.includes('403') || error.message?.includes('401')) errorMessage = 'Sem permissão para atualizar esta tarefa.';
-      if (error.message?.includes('404')) errorMessage = 'Tarefa não encontrada.';
-      
-      addNotification(user!.id, errorMessage, 'error');
+    if (user?.role === UserRole.EMPLOYEE && !isTaskMember) {
+      addNotification(user!.id, 'Você não é membro desta tarefa.', 'error');
+      return;
     }
+    
+    if (task.status === TaskStatus.TERMINADO && user?.role !== UserRole.ADMIN) {
+      addNotification(user!.id, 'Apenas administradores podem avançar tarefas finalizadas.', 'error');
+      return;
+    }
+
+    advanceMutation.mutate(task);
+  };
+
+  const handleRegressStatus = async (task: Task) => {
+    console.log('🔙 handleRegressStatus chamado:', {
+      taskId: task.id,
+      currentStatus: task.status,
+      userRole: user?.role
+    });
+
+    // Verificar permissões
+    const isTaskMember = task.responsibleId === user?.id || task.intervenientes?.includes(user?.id as string);
+    
+    if (user?.role === UserRole.EMPLOYEE && !isTaskMember) {
+      addNotification(user!.id, 'Você não tem permissão para recuar esta tarefa.', 'error');
+      return;
+    }
+
+    if (task.status === TaskStatus.TERMINADO && user?.role !== UserRole.ADMIN) {
+      addNotification(user!.id, 'Apenas administradores podem recuar tarefas finalizadas.', 'error');
+      return;
+    }
+
+    regressMutation.mutate(task);
+  };
+
+  const handleDeleteTask = async (task: Task) => {
+    if (!window.confirm(`Deseja eliminar a tarefa "${task.title}"?`)) return;
+    deleteMutation.mutate(task.id);
   };
 
   const addComment = async (taskId: string, text: string) => {
     if (!user) return;
-    
-    try {
-      const response = await apiComments.create(taskId, text);
-      if (response && response.id) {
-        const mappedComment = mapCommentFromAPI(response);
-        const updatedTasks = tasks.map(t => 
-          t.id === taskId ? { 
-            ...t, 
-            comments: [...(t.comments || []), mappedComment], 
-            updatedAt: new Date().toISOString() 
-          } : t
-        );
-        setTasks(updatedTasks);
-        logger.debug('Comment', 'Comentário criado na API com sucesso');
-        
-        addSystemActivity({ 
-          userId: user.id, 
-          userName: user.name, 
-          action: 'commented', 
-          entityType: 'task', 
-          entityId: taskId, 
-          entityTitle: tasks.find(x => x.id === taskId)?.title 
-        });
-      }
-    } catch (apiError) {
-      logger.warn('Comment', 'API comentário falhou', apiError);
-      addNotification(user.id, 'Não foi possível adicionar o comentário. Tente novamente.', 'error');
-    }
+    console.log('💬 [AppContext] Adicionando comentário:', { taskId, text });
+    commentMutation.mutate({ taskId, text });
   };
 
   // ============ USER METHODS ============
   const loadUsers = async () => {
     if (user?.role === UserRole.ADMIN) {
-      try {
-        const usersResponse = await apiAdminUsers.getAll();
-        if (usersResponse) {
-          const usersList = Array.isArray(usersResponse) ? usersResponse : (usersResponse.data || usersResponse.users || []);
-          const mappedUsers = usersList.map((u: any) => mapUserFromAPI(u));
-          if (mappedUsers.length > 0) {
-            setUsers(mappedUsers);
-          }
-        }
-      } catch (error) {
-        logger.debug('API', 'Não foi possível carregar utilizadores da API', error);
-      }
+      await refetchUsers();
     }
   };
 
   const createUser = async (userData: any) => {
+    console.log('👤 [AppContext] Criando usuário:', userData);
     try {
       const apiResponse = await apiAdminUsers.create({
         name: userData.name,
@@ -479,27 +644,14 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
         phone: userData.phone || ''
       });
 
-      let createdUser: User | null = null;
-      
-      if (apiResponse?.user) {
-        createdUser = mapUserFromAPI(apiResponse.user);
-      } else if (apiResponse?.id) {
-        createdUser = mapUserFromAPI(apiResponse);
-      } else if (apiResponse) {
-        createdUser = mapUserFromAPI(apiResponse);
-      }
-
-      if (!createdUser) {
-        throw new Error('Não foi possível obter o utilizador criado na API.');
-      }
-
-      setUsers([...users, createdUser]);
+      // Força o recarregamento dos usuários
+      await refetchUsers();
       
       users.filter(u => u.role === UserRole.ADMIN).forEach(u => {
-        addNotification(u.id, `Novo utilizador criado: ${createdUser!.name} (${createdUser!.email})`, 'info');
+        addNotification(u.id, `Novo utilizador criado: ${userData.name} (${userData.email})`, 'info');
       });
       
-      addNotification(user!.id, `Utilizador ${createdUser.name} criado com sucesso.`, 'success');
+      addNotification(user!.id, `Utilizador ${userData.name} criado com sucesso.`, 'success');
       
     } catch (error: any) {
       if (error.message?.includes('409') || error.message?.includes('Conflict') || 
@@ -511,9 +663,12 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
   };
 
   const updateUser = async (userId: string, userData: any) => {
+    console.log('✏️ [AppContext] Atualizando usuário:', userId, userData);
     try {
       await apiUsers.update(userId, userData);
-      setUsers(users.map(x => x.id !== userId ? x : { ...x, ...userData }));
+      
+      // Força o recarregamento dos usuários
+      await refetchUsers();
       
       users.filter(u => u.role === UserRole.ADMIN).forEach(u => {
         addNotification(u.id, `Utilizador atualizado: ${userData.name} (${userData.email})`, 'info');
@@ -531,12 +686,18 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
     const userToDelete = users.find(u => u.id === userId);
     if (!userToDelete) return;
     
+    if (!window.confirm(`Tem certeza que deseja eliminar o utilizador "${userToDelete.name}"?`)) {
+      return;
+    }
+    
+    console.log('🗑️ [AppContext] Deletando usuário:', userId);
     try {
       await apiAdminUsers.delete(userId);
-      logger.debug('User', 'Utilizador eliminado na API', userId);
+      
+      // Força o recarregamento dos usuários
+      await refetchUsers();
       
       addNotification(user!.id, `Utilizador ${userToDelete.name} eliminado com sucesso.`, 'success');
-      setUsers(users.filter(u => u.id !== userId));
       
     } catch (apiError) {
       logger.warn('User', 'Erro ao eliminar na API', apiError);
@@ -620,29 +781,16 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
 
   // ============ DATA LOADING ============
   const loadDataFromAPI = async (currentUser?: User | null) => {
+    const activeUser = currentUser ?? user;
+    if (!activeUser) return;
+    
     try {
-      const activeUser = currentUser ?? user;
-      const isAdmin = activeUser?.role === UserRole.ADMIN;
-      
-      // Load tasks
-      const tasksResponse = isAdmin ? await apiTasks.getAll() : await apiTasks.getMyTasks();
-      if (tasksResponse) {
-        const tasksList = Array.isArray(tasksResponse) ? tasksResponse : (tasksResponse.data || tasksResponse.tasks || []);
-        const mappedTasks = tasksList.map((t: any) => mapTaskFromAPI(t));
-        if (mappedTasks.length > 0) {
-          setTasks(mappedTasks);
-        } else {
-          setTasks([]);
-        }
-      }
-
-      // Load users (admin only)
-      if (isAdmin) {
-        await loadUsers();
+      await refetchTasks();
+      if (activeUser.role === UserRole.ADMIN) {
+        await refetchUsers();
       }
     } catch (error) {
       console.error('Erro ao carregar dados:', error);
-      setTasks([]);
     }
   };
 
@@ -672,16 +820,6 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
   }, [theme]);
 
   useEffect(() => {
-    // Check for invite token in URL
-    const invite = new URLSearchParams(window.location.search).get('invite');
-    if (invite) {
-      setInviteToken(invite);
-      setUser(null);
-      setView('set-password');
-      return;
-    }
-
-    // Restore auth token
     const savedToken = sessionStorage.getItem('gestora_api_token');
     if (savedToken) {
       setGlobalAuthToken(savedToken);
@@ -727,7 +865,9 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
     }
   }, []);
 
-  // ============ CONTEXT VALUE ============
+  // ============================================
+  // CONTEXT VALUE
+  // ============================================
   const contextValue: AppContextType = {
     // State
     user,
@@ -760,11 +900,12 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
     validateResetToken,
     resetPassword,
     
-    // Tasks
+    // Tasks (usando as mutations do React Query)
     createTask,
     updateTask,
     deleteTask,
     handleAdvanceStatus,
+    handleRegressStatus,
     handleDeleteTask,
     addComment,
     filterTasks,
@@ -792,6 +933,9 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
     openAvatarUpload
   };
 
+  // ============================================
+  // RENDER
+  // ============================================
   return (
     <AppContext.Provider value={contextValue}>
       {children}
@@ -803,12 +947,12 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
         onChange={(e) => {
           const f = e.target.files?.[0];
           if (f && uploadingAvatarFor) { 
-            const r = new FileReader(); 
-            r.onload = () => { 
-              saveAvatar(uploadingAvatarFor, r.result as string); 
+            const reader = new FileReader(); 
+            reader.onload = () => { 
+              saveAvatar(uploadingAvatarFor, reader.result as string); 
               setUploadingAvatarFor(null); 
             }; 
-            r.readAsDataURL(f); 
+            reader.readAsDataURL(f); 
           }
           e.target.value = '';
         }} 

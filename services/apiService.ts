@@ -9,7 +9,7 @@ type Json = Record<string, any>;
 function getApiBase(): string {
   // Usar variável de ambiente do Vite ou fallback para localhost
   //const viteBase = import.meta.env.VITE_API_BASE_URL;
-  const base = "http://localhost:8080";
+  const base = "https://ilungi-gestora-api-s1dm.onrender.com";
   return String(base || "").replace(/\/+$/, "");
 }
 
@@ -509,21 +509,15 @@ export const mapUserFromAPI = (apiUser: any) => {
 };
 
 export const mapTaskFromAPI = (apiTask: any) => {
-  // Converter status do backend para o frontend
-  const statusMap: Record<string, string> = {
-    'PENDENTE': 'ABERTO',
-    'EM_PROGRESSO': 'EM_PROGRESSO',
-    'TERMINADO': 'TERMINADO',
-    'FECHADO': 'FECHADO',
-    'ATRASADA': 'ATRASADA',
-    'ABERTO': 'ABERTO'
-  };
-
+  // IMPORTANTE: Manter o status original do backend
+  // Não mapear 'PENDENTE' para 'ABERTO'
+  
   return {
     id: String(apiTask.id || ""),
     title: apiTask.title || "",
     description: apiTask.description || "",
-    status: statusMap[apiTask.status?.toUpperCase()] || "ABERTO",
+    // Manter o status exatamente como vem do backend
+    status: apiTask.status || "PENDENTE",
     priority: apiTask.priority || "MEDIUM",
     responsibleId: String(apiTask.responsibleId || (apiTask.responsibles && apiTask.responsibles[0]?.id) || ""),
     responsibleName: apiTask.responsibleName || (apiTask.responsibles && apiTask.responsibles[0]?.name) || "",
@@ -540,15 +534,14 @@ export const mapTaskFromAPI = (apiTask: any) => {
     deadlineType: 'days' // Default para backend Spring
   };
 };
-
 export const mapCommentFromAPI = (apiComment: any) => {
   return {
     id: String(apiComment.id || ""),
     text: apiComment.text || apiComment.content || "",
-    userId: String(apiComment.userId || apiComment.authorId || ""),
-    userName: apiComment.userName || apiComment.authorName || "Anônimo",
+    userId: String(apiComment.userId || apiComment.user?.id || apiComment.authorId || ""),
+    userName: apiComment.userName || apiComment.user?.name || apiComment.authorName || "Anônimo",
     timestamp: apiComment.timestamp || apiComment.createdAt || new Date().toISOString(),
-    taskId: String(apiComment.taskId || "")
+    taskId: String(apiComment.taskId || apiComment.task?.id || "")
   };
 };
 

@@ -1,4 +1,5 @@
-import React, { useState, useRef, useEffect } from 'react';
+// src/pages/App.tsx
+import React, { useState, useRef, useEffect, useContext } from 'react';
 import { 
   LayoutDashboard, CheckSquare, Users, LogOut, Bell, 
   Menu, ChevronLeftCircle, Moon, Sun, User as UserIcon,
@@ -15,16 +16,32 @@ import { useTheme } from '../hooks/useTheme';
 import { SidebarNavItem } from '../components/shared/SidebarNavItem';
 import { TasksView } from '../components/tasks/TasksView';
 import { UsersView } from '../components/users/UsersView';
-import { DashboardView} from '../components/dashboard/DashboardView';
+import { DashboardView } from '../components/dashboard/DashboardView';
 import { ProfileView } from '../components/profile/ProfileView';
 import { ReportsView } from '../components/dashboard/ReportsView';
 import { User, UserRole, TaskStatus } from '../types';
 import { TRANSLATIONS } from '../constants';
+import { AppContext } from '../context/AppContext'; // Importe o contexto
 
 export const AppPage = () => {
+  // ============ CONTEXT ============
+  // Use o contexto em vez dos hooks individuais para evitar conflitos
+  const context = useContext(AppContext);
+  
   // ============ HOOKS ============
   const { user, setUser, logout } = useAuth();
-  const { tasks, filteredTasks, filterTasks, handleAdvanceStatus, handleDeleteTask, addComment } = useTasks();
+  
+  // ✅ Use os hooks normalmente, mas certifique-se que estão declarados ANTES de serem usados
+  const { 
+    tasks, 
+    filteredTasks, 
+    filterTasks, 
+    handleAdvanceStatus, 
+    handleRegressStatus,
+    handleDeleteTask, 
+    addComment 
+  } = useTasks();
+  
   const { 
     users, 
     setUsers, 
@@ -34,6 +51,7 @@ export const AppPage = () => {
     updateUser,
     deleteUser 
   } = useUsers();
+  
   const { notifications, markAllNotificationsAsRead, addNotification } = useNotifications();
   const { visibleActivities, addSystemActivity } = useActivities();
   const { activeTab, setActiveTab, setView } = useNavigation();
@@ -44,6 +62,8 @@ export const AppPage = () => {
   const avatarInputRef = useRef<HTMLInputElement>(null);
   
   // ============ STATE ============
+  // IMPORTANTE: Todas as variáveis de estado DEVEM ser declaradas aqui,
+  // antes de serem usadas em qualquer lugar
   const [isSidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [isAppSidebarOpen, setAppSidebarOpen] = useState(false);
   const [isNotificationsOpen, setNotificationsOpen] = useState(false);
@@ -55,9 +75,15 @@ export const AppPage = () => {
   const [profilePasswordError, setProfilePasswordError] = useState<string | null>(null);
   const [profilePasswordSuccess, setProfilePasswordSuccess] = useState<string | null>(null);
   
-  // Task filters
+  // Task filters - DECLARADOS AQUI (antes de serem usados)
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
+
+  // ============ EARLY RETURN ============
+  // Se não tiver usuário, não renderiza nada (ou mostra loading)
+  if (!user) {
+    return <div>Carregando...</div>;
+  }
 
   // ============ HANDLERS ============
   const setActiveTabSafe = (tab: string) => {
@@ -88,7 +114,7 @@ export const AppPage = () => {
     e.target.value = '';
   };
 
-  // Task filter handlers
+  // Task filter handlers - AGORA searchQuery e statusFilter já estão definidos
   const handleSearchChange = (query: string) => {
     setSearchQuery(query);
     filterTasks({ search: query, status: statusFilter });
@@ -378,6 +404,7 @@ export const AppPage = () => {
               users={users}
               user={user}
               onAdvanceStatus={handleAdvanceStatus}
+              onRegressStatus={handleRegressStatus}
               onDeleteTask={handleDeleteTask}
               onAddComment={addComment}
               onSearchChange={handleSearchChange}

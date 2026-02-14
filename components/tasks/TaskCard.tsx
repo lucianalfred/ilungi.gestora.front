@@ -1,16 +1,17 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
-  Calendar, ArrowRight, Check, CheckCircle2, 
-  ShieldCheck, AlertTriangle, Pencil, Trash2 
+  Calendar, ArrowRight, ArrowLeft, Check, CheckCircle2, 
+  ShieldCheck, AlertTriangle, Pencil, Trash2
 } from 'lucide-react';
-import { Task, TaskStatus, User, UserRole } from '../../types';
+import { Task, TaskStatus, User, UserRole, TaskStatusAliases } from '../../types';
 import { STATUS_COLORS, StatusOrder } from '../../constants/index';
 
 interface TaskCardProps {
   task: Task;
   user: User;
   users: User[];
-  onAdvance: () => void;
+  onAdvance: () => Promise<void>;
+  onRegress?: () => Promise<void>;
   onDelete: () => void;
   onEdit?: () => void;
   onAddComment?: (text: string) => void;
@@ -21,38 +22,174 @@ export const TaskCard = ({
   user, 
   users, 
   onAdvance, 
+  onRegress,
   onDelete, 
   onEdit, 
   onAddComment 
 }: TaskCardProps) => {
   const [commentText, setCommentText] = useState('');
   const [showAllComments, setShowAllComments] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
   
-  const currentIndex = StatusOrder.indexOf(task.status);
-  const nextStatus = StatusOrder[currentIndex + 1];
-  const isFinished = task.status === TaskStatus.TERMINADO;
-  const isClosed = task.status === TaskStatus.FECHADO;
-  const isEmployee = user.role === UserRole.EMPLOYEE;
-  const isMyTask = task.responsibleId === user.id;
-  const isTaskMember = task.responsibleId === user.id || task.intervenientes?.includes(user.id);
+  // Mapear status do backend para o enum do frontend
+  const getMappedStatus = (status: string): TaskStatus => {
+    // Primeiro tenta o status diretamente
+    if (Object.values(TaskStatus).includes(status as TaskStatus)) {
+      return status as TaskStatus;
+    }
+    
+    // Depois tenta os aliases
+    const aliasMap: Record<string, TaskStatus> = {
+      // Mapeamentos para PENDENTE
+      'ABERTO': TaskStatus.PENDENTE,
+      'ABERTA': TaskStatus.PENDENTE,
+      
+      // Mapeamentos para EM_PROGRESSO
+      'EM_ANDAMENTO': TaskStatus.EM_PROGRESSO,
+      'EM ANDAMENTO': TaskStatus.EM_PROGRESSO,
+      'EM_EXECUCAO': TaskStatus.EM_PROGRESSO,
+      'EM EXECUCAO': TaskStatus.EM_PROGRESSO,
+      'EM_REVISAO': TaskStatus.EM_PROGRESSO,
+      'EM REVISAO': TaskStatus.EM_PROGRESSO,
+      'REVISAO': TaskStatus.EM_PROGRESSO,
+      
+      // Mapeamentos para TERMINADO
+      'CONCLUIDA': TaskStatus.TERMINADO,
+      'CONCLUÍDA': TaskStatus.TERMINADO,
+      'CONCLUIDO': TaskStatus.TERMINADO,
+      'CONCLUÍDO': TaskStatus.TERMINADO,
+      
+      // Mapeamentos para FECHADO
+      'ARQUIVADO': TaskStatus.FECHADO,
+      'ARQUIVADA': TaskStatus.FECHADO,
+      'CANCELADA': TaskStatus.FECHADO
+    };
+    
+    return aliasMap[status] || status as TaskStatus;
+  };
+
+  const mappedStatus = getMappedStatus(task.status);
+  
+  // Verificar se StatusOrder é um array válido
+  if (!Array.isArray(StatusOrder) || StatusOrder.length === 0) {
+    console.error('❌ StatusOrder não é um array válido:', StatusOrder);
+    return <div>Erro: StatusOrder não configurado</div>;
+  }
+  
+  // Encontrar índice no StatusOrder
+  const currentIndex = StatusOrder.indexOf(mappedStatus);
+  
+  // Verificar se o status atual está no fluxo normal de trabalho
+  const isInWorkflow = currentIndex !== -1;
+  
+  // Status terminais que não podem ser alterados
+  const isTerminal = mappedStatus === TaskStatus.ATRASADA;
+  
+  const isFinished = mappedStatus === TaskStatus.TERMINADO;
+  const isClosed = mappedStatus === TaskStatus.FECHADO || isTerminal;
+  
+  // Calcular próximo e anterior status
+  let nextStatus = null;
+  let prevStatus = null;
+  
+  if (isInWorkflow) {
+    if (currentIndex < StatusOrder.length - 1) {
+      nextStatus = StatusOrder[currentIndex + 1];
+    }
+    if (currentIndex > 0) {
+      prevStatus = StatusOrder[currentIndex - 1];
+    }
+  }
+  
+  const isTaskMember = task.responsibleId === user.id || 
+                      task.intervenientes?.includes(user.id);
   const isAdmin = user.role === UserRole.ADMIN;
   
+  // Log detalhado
+  console.log('🎯 TaskCard Debug:', {
+    statusOriginal: task.status,
+    statusMapeado: mappedStatus,
+    currentIndex,
+    isInWorkflow,
+    isTerminal,
+    nextStatus,
+    prevStatus,
+    statusOrder: StatusOrder,
+    podeAvancar: !isClosed && nextStatus !== null,
+    podeRecuar: !isClosed && prevStatus !== null
+  });
+  
+  // ✅ PERMISSÕES: MEMBROS DA TAREFA E ADMIN PODEM AGIR
+  const canAdvance = !isClosed && nextStatus !== null && (isAdmin || isTaskMember);
+  const canRegress = !isClosed && prevStatus !== null && (isAdmin || isTaskMember);
+
+  // Apenas admin pode mexer em tarefas finalizadas (TERMINADO)
+  const finalCanAdvance = isFinished ? (isAdmin && canAdvance) : canAdvance;
+  const finalCanRegress = isFinished ? (isAdmin && canRegress) : canRegress;
+
   const respName = users?.find((u: User) => u.id === task.responsibleId)?.name;
   const extra = task.intervenientes?.length ? ` +${task.intervenientes.length}` : '';
 
+  // Handler para avançar com loading
+  const handleAdvance = async () => {
+    if (!finalCanAdvance) {
+      console.log('❌ Não pode avançar');
+      return;
+    }
+    console.log('✅ Pode avançar, chamando onAdvance...');
+    setIsLoading(true);
+    try {
+      await onAdvance();
+      console.log('✅ onAdvance concluído');
+    } catch (error) {
+      console.error('❌ Erro ao avançar:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Handler para recuar com loading
+  const handleRegress = async () => {
+    if (!finalCanRegress || !onRegress) {
+      console.log('❌ Não pode recuar');
+      return;
+    }
+    console.log('✅ Pode recuar, chamando onRegress...');
+    setIsLoading(true);
+    try {
+      await onRegress();
+      console.log('✅ onRegress concluído');
+    } catch (error) {
+      console.error('❌ Erro ao recuar:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Função para obter o texto do botão avançar
+  const getAdvanceButtonText = () => {
+    if (isFinished) {
+      return isAdmin ? 'Validar' : 'Finalizada';
+    }
+    if (mappedStatus === TaskStatus.PENDENTE) return 'Iniciar';
+    if (mappedStatus === TaskStatus.EM_PROGRESSO) return 'Concluir';
+    if (mappedStatus === TaskStatus.TERMINADO) return 'Fechar';
+    return 'Avançar';
+  };
+
   return (
     <div className="bg-white dark:bg-slate-900 rounded-2xl sm:rounded-[3.5rem] p-6 sm:p-10 border border-slate-100 dark:border-slate-800 shadow-sm hover:shadow-2xl transition-all group flex flex-col h-full relative overflow-hidden">
-      {task.status === TaskStatus.ATRASADA && (
+      {mappedStatus === TaskStatus.ATRASADA && (
         <div className="absolute top-0 right-0 w-24 sm:w-32 h-24 sm:h-32 bg-rose-500/10 rounded-full -mr-12 sm:-mr-16 -mt-12 sm:-mt-16 flex items-end justify-start p-4 sm:p-8">
           <AlertTriangle className="text-rose-500" size={20} />
         </div>
       )}
       
       <div className="flex justify-between items-start mb-4 sm:mb-8">
-        <span className={`px-3 sm:px-5 py-1.5 sm:py-2 rounded-full text-[8px] sm:text-[9px] font-black uppercase tracking-widest ${STATUS_COLORS[task.status]}`}>
-          {task.status}
+        <span className={`px-3 sm:px-5 py-1.5 sm:py-2 rounded-full text-[8px] sm:text-[9px] font-black uppercase tracking-widest ${STATUS_COLORS[mappedStatus] || STATUS_COLORS[TaskStatus.PENDENTE]}`}>
+          {mappedStatus === TaskStatus.EM_PROGRESSO ? 'EM PROGRESSO' : mappedStatus}
         </span>
-        {user.role === UserRole.ADMIN && (
+        {isAdmin && (
           <div className="flex gap-1">
             {onEdit && (
               <button onClick={onEdit} className="p-2 text-slate-300 hover:text-[#10b981] transition-colors" title="Editar">
@@ -140,8 +277,11 @@ export const TaskCard = ({
         )}
       </div>
 
-      <div className="mt-6 sm:mt-10 pt-6 sm:pt-8 border-t border-slate-50 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4">
-        <div className="flex items-center gap-2 text-slate-400">
+      {/* SEÇÃO DE BOTÕES */}
+      <div className="mt-6 sm:mt-10 pt-6 sm:pt-8 border-t border-slate-50 dark:border-slate-800">
+        
+        {/* Data de prazo */}
+        <div className="flex items-center gap-2 text-slate-400 mb-4">
           <Calendar size={14}/>
           <span className="text-[10px] font-black uppercase tracking-widest">
             Prazo: {new Date(task.deliveryDate).toLocaleDateString('pt-PT', { 
@@ -151,29 +291,71 @@ export const TaskCard = ({
             })}
           </span>
         </div>
-        {!isClosed && nextStatus && (isMyTask || !isEmployee) && (
-          <button 
-            disabled={isFinished && isEmployee}
-            onClick={onAdvance}
-            className={`flex-1 sm:max-w-[140px] py-2.5 sm:py-3 rounded-xl sm:rounded-2xl text-[9px] font-black uppercase tracking-widest shadow-xl transition-all flex items-center justify-center gap-2
-              ${isFinished 
-                ? 'bg-[#10b981] text-white shadow-emerald-500/20' 
-                : 'bg-slate-900 dark:bg-slate-700 text-white hover:bg-[#10b981]'
-              }`}
-          >
-            {isFinished 
-              ? (user.role === UserRole.ADMIN ? <Check size={14}/> : <ShieldCheck size={14}/>)
-              : <ArrowRight size={14}/>
-            }
-            {isFinished 
-              ? (user.role === UserRole.ADMIN ? 'Validar' : 'Finalizada')
-              : 'Avançar'
-            }
-          </button>
-        )}
-        {isClosed && (
-          <div className="text-[#10b981] flex items-center gap-1 font-black text-[9px] uppercase tracking-widest">
-            <CheckCircle2 size={16}/> Fechada
+
+        {/* Botões de ação */}
+        {mappedStatus !== TaskStatus.ATRASADA ? (
+          !isClosed ? (
+            <div className="flex gap-2">
+              {/* Botão RECUAR */}
+              {finalCanRegress && onRegress && (
+                <button 
+                  disabled={isLoading}
+                  onClick={handleRegress}
+                  className="flex-1 py-2.5 sm:py-3 rounded-xl sm:rounded-2xl text-[9px] font-black uppercase tracking-widest shadow-xl transition-all flex items-center justify-center gap-2 bg-slate-700 hover:bg-slate-600 text-white"
+                >
+                  {isLoading ? (
+                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  ) : (
+                    <ArrowLeft size={14} />
+                  )}
+                  Recuar
+                </button>
+              )}
+
+              {/* Botão AVANÇAR */}
+              {finalCanAdvance && (
+                <button 
+                  disabled={isLoading}
+                  onClick={handleAdvance}
+                  className={`flex-1 py-2.5 sm:py-3 rounded-xl sm:rounded-2xl text-[9px] font-black uppercase tracking-widest shadow-xl transition-all flex items-center justify-center gap-2
+                    ${isFinished 
+                      ? 'bg-[#10b981] text-white shadow-emerald-500/20' 
+                      : 'bg-slate-900 dark:bg-slate-700 text-white hover:bg-[#10b981]'
+                    }`}
+                >
+                  {isLoading ? (
+                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  ) : isFinished ? (
+                    isAdmin ? <Check size={14}/> : <ShieldCheck size={14}/>
+                  ) : (
+                    <ArrowRight size={14}/>
+                  )}
+                  {getAdvanceButtonText()}
+                </button>
+              )}
+
+              {/* Mensagens informativas */}
+              {isTaskMember && !finalCanAdvance && !finalCanRegress && !isClosed && (
+                <div className="w-full text-center text-[10px] text-slate-400 py-2">
+                  {!nextStatus && !prevStatus ? 'Sem mais ações disponíveis' : 'Não é possível alterar'}
+                </div>
+              )}
+
+              {!isTaskMember && !isAdmin && !isClosed && (
+                <div className="w-full text-center text-[10px] text-slate-400 py-2">
+                  Apenas membros da tarefa podem agir
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="text-[#10b981] flex items-center gap-1 font-black text-[9px] uppercase tracking-widest">
+              <CheckCircle2 size={16}/> Fechada
+            </div>
+          )
+        ) : (
+          // Estado ATRASADA
+          <div className="text-rose-500 flex items-center gap-1 font-black text-[9px] uppercase tracking-widest">
+            <AlertTriangle size={16}/> Em atraso
           </div>
         )}
       </div>

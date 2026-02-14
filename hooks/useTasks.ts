@@ -3,9 +3,11 @@ import { AppContext } from '../context/AppContext';
 
 export const useTasks = () => {
   const context = useContext(AppContext);
+  
   if (!context) {
     throw new Error('useTasks must be used within AppProvider');
   }
+  
   return {
     tasks: context.tasks,
     setTasks: context.setTasks,
@@ -15,6 +17,7 @@ export const useTasks = () => {
     updateTask: context.updateTask,
     deleteTask: context.deleteTask,
     handleAdvanceStatus: context.handleAdvanceStatus,
+    handleRegressStatus: context.handleRegressStatus,  
     handleDeleteTask: context.handleDeleteTask,
     addComment: context.addComment
   };

@@ -11,14 +11,28 @@ interface TaskModalProps {
   onClose: () => void;
 }
 
-export const TaskModal = ({ isOpen, editingTaskId, onClose }: TaskModalProps) => {
-  const { tasks, users, createTask, updateTask } = useTasks();
-  const { user } = useUsers();
+export const TaskModal = ({ 
+  isOpen, 
+  editingTaskId, 
+  onClose 
+}: TaskModalProps) => {
+  const { tasks, createTask, updateTask } = useTasks();
+  const { users } = useUsers();
+  
+  const [isLoading, setIsLoading] = useState(false);
   const [taskFormError, setTaskFormError] = useState<string | null>(null);
   const [taskFormDeliveryPreview, setTaskFormDeliveryPreview] = useState('');
   
-  const editTask = editingTaskId ? tasks.find(t => t.id === editingTaskId) : null;
-  const respIds = editTask ? [editTask.responsibleId, ...(editTask.intervenientes || [])] : [];
+  const editTask = editingTaskId 
+    ? tasks.find(t => t.id === editingTaskId) 
+    : null;
+  
+  const respIds = editTask 
+    ? [editTask.responsibleId, ...(editTask.intervenientes || [])] 
+    : [];
+
+  // Verificar se users está disponível
+  const hasUsers = users && Array.isArray(users) && users.length > 0;
 
   useEffect(() => {
     if (editTask) {
@@ -32,8 +46,6 @@ export const TaskModal = ({ isOpen, editingTaskId, onClose }: TaskModalProps) =>
       setTaskFormDeliveryPreview('');
     }
   }, [editTask]);
-
-  if (!isOpen && !editingTaskId) return null;
 
   const recalcDelivery = (form: HTMLFormElement) => {
     const start = (form?.elements.namedItem('startDate') as HTMLInputElement)?.value;
@@ -64,6 +76,8 @@ export const TaskModal = ({ isOpen, editingTaskId, onClose }: TaskModalProps) =>
     }
     
     setTaskFormError(null);
+    setIsLoading(true);
+    
     const start = fd.get('startDate') as string;
     const val = Number(fd.get('deadlineValue'));
     const type = (fd.get('deadlineType') as 'days'|'hours') || 'days';
@@ -100,8 +114,12 @@ export const TaskModal = ({ isOpen, editingTaskId, onClose }: TaskModalProps) =>
         errorMsg = 'Sem permissão para realizar esta ação.';
       }
       setTaskFormError(errorMsg);
+    } finally {
+      setIsLoading(false);
     }
   };
+
+  if (!isOpen && !editingTaskId) return null;
 
   return (
     <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-[100] flex items-center justify-center p-4 sm:p-6 overflow-y-auto py-8 animate-in">
@@ -109,6 +127,7 @@ export const TaskModal = ({ isOpen, editingTaskId, onClose }: TaskModalProps) =>
         <button 
           onClick={onClose} 
           className="absolute top-3 right-3 sm:top-4 sm:right-4 p-2 text-slate-300 hover:text-rose-500 transition-colors z-10"
+          disabled={isLoading}
         >
           <X size={18} className="sm:w-5 sm:h-5"/>
         </button>
@@ -127,64 +146,76 @@ export const TaskModal = ({ isOpen, editingTaskId, onClose }: TaskModalProps) =>
         )}
         
         <form id="taskForm" className="grid grid-cols-1 md:grid-cols-2 gap-2 sm:gap-3" onSubmit={handleSubmit}>
+          
+          {/* Título */}
           <div className="md:col-span-2 space-y-1">
             <label className="text-[8px] font-black uppercase text-slate-400 tracking-widest ml-1">
-              Título
+              Título <span className="text-rose-500">*</span>
             </label>
             <input 
               name="title" 
               defaultValue={editTask?.title} 
-              className="w-full px-3 py-1.5 bg-slate-50 dark:bg-slate-800 border-none rounded-lg outline-none focus:ring-2 focus:ring-emerald-500/30 font-bold text-xs" 
+              className="w-full px-3 py-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg outline-none focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500 font-bold text-sm" 
               required 
+              placeholder="Digite o título da tarefa"
+              disabled={isLoading}
             />
           </div>
           
+          {/* Descrição */}
           <div className="md:col-span-2 space-y-1">
             <label className="text-[8px] font-black uppercase text-slate-400 tracking-widest ml-1">
-              Descrição
+              Descrição <span className="text-rose-500">*</span>
             </label>
             <textarea 
               name="description" 
               defaultValue={editTask?.description} 
-              rows={2} 
-              className="w-full px-3 py-1.5 bg-slate-50 dark:bg-slate-800 border-none rounded-lg outline-none focus:ring-2 focus:ring-emerald-500/30 font-medium resize-none text-xs" 
+              rows={3} 
+              className="w-full px-3 py-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg outline-none focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500 font-medium resize-none text-sm" 
               required 
+              placeholder="Descreva a tarefa em detalhes"
+              disabled={isLoading}
             />
           </div>
           
+          {/* Data Início */}
           <div className="space-y-1">
             <label className="text-[8px] font-black uppercase text-slate-400 tracking-widest ml-1">
-              Data Início
+              Data Início <span className="text-rose-500">*</span>
             </label>
             <input 
               name="startDate" 
               type="datetime-local" 
               defaultValue={editTask?.startDate?.slice(0,16)} 
               onInput={(e) => recalcDelivery((e.target as HTMLInputElement).form!)} 
-              className="w-full px-3 py-1.5 bg-slate-50 dark:bg-slate-800 border-none rounded-lg outline-none focus:ring-2 focus:ring-emerald-500/30 font-bold text-xs" 
+              className="w-full px-3 py-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg outline-none focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500 font-bold text-sm" 
               required 
+              disabled={isLoading}
             />
           </div>
           
+          {/* Duração */}
           <div className="space-y-1">
             <label className="text-[8px] font-black uppercase text-slate-400 tracking-widest ml-1">
-              Duração
+              Duração <span className="text-rose-500">*</span>
             </label>
-            <div className="flex gap-1.5">
+            <div className="flex gap-2">
               <input 
                 name="deadlineValue" 
                 type="number" 
                 defaultValue={editTask?.deadlineValue ?? 1} 
                 min={1} 
                 onInput={(e) => recalcDelivery((e.target as HTMLInputElement).form!)} 
-                className="flex-1 px-3 py-1.5 bg-slate-50 dark:bg-slate-800 border-none rounded-lg outline-none focus:ring-2 focus:ring-emerald-500/30 font-bold text-xs" 
+                className="flex-1 px-3 py-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg outline-none focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500 font-bold text-sm" 
                 required 
+                disabled={isLoading}
               />
               <select 
                 name="deadlineType" 
-                defaultValue={editTask?.deadlineType} 
+                defaultValue={editTask?.deadlineType || 'days'} 
                 onChange={(e) => recalcDelivery((e.target as HTMLSelectElement).form!)} 
-                className="px-3 py-1.5 bg-slate-50 dark:bg-slate-800 border-none rounded-lg outline-none focus:ring-2 focus:ring-emerald-500/30 font-bold text-xs"
+                className="px-3 py-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg outline-none focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500 font-bold text-sm"
+                disabled={isLoading}
               >
                 <option value="days">Dias</option>
                 <option value="hours">Horas</option>
@@ -192,39 +223,102 @@ export const TaskModal = ({ isOpen, editingTaskId, onClose }: TaskModalProps) =>
             </div>
           </div>
           
+          {/* Data Entrega (calculada) */}
           <div className="md:col-span-2 space-y-1">
             <label className="text-[8px] font-black uppercase text-slate-400 tracking-widest ml-1">
               Data Entrega (calculada)
             </label>
-            <div className="px-3 py-1.5 bg-emerald-50 dark:bg-emerald-900/20 rounded-lg font-bold text-[#10b981] text-xs">
+            <div className="px-3 py-2.5 bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800 rounded-lg font-bold text-emerald-600 dark:text-emerald-400 text-sm">
               {taskFormDeliveryPreview || (editTask ? new Date(editTask.deliveryDate).toLocaleString('pt-PT', { dateStyle: 'short', timeStyle: 'short' }) : '—')}
             </div>
           </div>
           
+          {/* Responsáveis */}
           <div className="md:col-span-2 space-y-1">
             <label className="text-[8px] font-black uppercase text-slate-400 tracking-widest ml-1">
-              Responsáveis (múltipla escolha)
+              Responsáveis (múltipla escolha) <span className="text-rose-500">*</span>
             </label>
-            <div className="flex flex-wrap gap-1.5 p-2 bg-slate-50 dark:bg-slate-800 rounded-lg max-h-24 overflow-y-auto">
-              {users.map(u => (
-                <label key={u.id} className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-white dark:bg-slate-700 cursor-pointer hover:bg-emerald-50 dark:hover:bg-emerald-900/20 text-xs">
-                  <input 
-                    type="checkbox" 
-                    name="responsibleIds" 
-                    value={u.id} 
-                    defaultChecked={respIds.includes(u.id)} 
-                    className="rounded" 
-                  />
-                  <span className="font-bold">{u.name}</span>
-                </label>
-              ))}
-            </div>
+            
+            {!hasUsers ? (
+              <div className="p-4 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg text-center">
+                <p className="text-amber-700 dark:text-amber-400 text-sm font-bold">
+                  ⚠️ Nenhum utilizador encontrado
+                </p>
+                <p className="text-amber-600 dark:text-amber-500 text-xs mt-1">
+                  É necessário ter pelo menos um utilizador cadastrado para criar tarefas.
+                </p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 p-3 bg-slate-50 dark:bg-slate-800 rounded-lg max-h-48 overflow-y-auto">
+                {users.map(user => (
+                  <label 
+                    key={user.id} 
+                    className={`flex items-center gap-2 px-3 py-2 rounded-lg bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 transition-colors ${
+                      isLoading 
+                        ? 'opacity-50 cursor-not-allowed' 
+                        : 'cursor-pointer hover:bg-emerald-50 dark:hover:bg-emerald-900/20'
+                    }`}
+                  >
+                    <input 
+                      type="checkbox" 
+                      name="responsibleIds" 
+                      value={user.id} 
+                      defaultChecked={respIds.includes(user.id)} 
+                      className="w-4 h-4 text-emerald-600 rounded border-slate-300 focus:ring-emerald-500/20"
+                      disabled={isLoading}
+                    />
+                    <div className="flex-1 min-w-0">
+                      <p className="font-bold text-slate-900 dark:text-white text-xs truncate">
+                        {user.name}
+                      </p>
+                      <p className="text-[9px] text-slate-500 dark:text-slate-400 truncate">
+                        {user.email}
+                      </p>
+                    </div>
+                    {user.role === 'ADMIN' && (
+                      <span className="text-[8px] font-bold text-emerald-600 bg-emerald-50 dark:bg-emerald-900/20 px-1.5 py-0.5 rounded-full">
+                        Admin
+                      </span>
+                    )}
+                  </label>
+                ))}
+              </div>
+            )}
+            
+            {hasUsers && (
+              <p className="text-[9px] text-slate-400 mt-1">
+                Selecionados: {respIds.length} utilizador(es)
+              </p>
+            )}
           </div>
           
-          <div className="md:col-span-2 pt-1">
-            <Button type="submit" className="w-full py-2 rounded-lg bg-[#10b981] shadow-emerald-500/20 shadow-lg text-xs uppercase tracking-[0.1em]">
-              {editTask ? 'Guardar' : 'Criar'}
-            </Button>
+          {/* Botões */}
+          <div className="md:col-span-2 pt-4 mt-2 border-t border-slate-100 dark:border-slate-800">
+            <div className="flex gap-3">
+              <Button 
+                type="submit" 
+                disabled={!hasUsers || isLoading}
+                className="flex-1 py-3 rounded-xl bg-[#10b981] hover:bg-[#059669] shadow-lg shadow-emerald-500/20 text-sm uppercase tracking-wider"
+              >
+                {isLoading ? (
+                  <>
+                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                    {editTask ? 'A guardar...' : 'A criar...'}
+                  </>
+                ) : (
+                  editTask ? 'Guardar Alterações' : 'Criar Tarefa'
+                )}
+              </Button>
+              <Button 
+                type="button" 
+                variant="ghost" 
+                onClick={onClose}
+                disabled={isLoading}
+                className="px-6 py-3"
+              >
+                Cancelar
+              </Button>
+            </div>
           </div>
         </form>
       </div>
