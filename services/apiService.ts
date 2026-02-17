@@ -9,7 +9,7 @@ type Json = Record<string, any>;
 function getApiBase(): string {
   // Usar variável de ambiente do Vite ou fallback para localhost
   //const viteBase = import.meta.env.VITE_API_BASE_URL;
-  const base = "http://localhost:8080";
+  const base = "https://ilungi-gestora-api-7v7l.onrender.com";
   return String(base || "").replace(/\/+$/, "");
 }
 
