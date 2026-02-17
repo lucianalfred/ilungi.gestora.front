@@ -32,16 +32,34 @@ export const ForgotPasswordModal = ({ onClose }: ForgotPasswordModalProps) => {
     setIsLoading(true);
 
     try {
+      // ✅ Agora o método existe!
       const response = await apiAuth.forgotPassword(email);
-      setMessage(
-        `✅ Solicitação enviada com sucesso! Se o email ${email} estiver cadastrado, você receberá uma senha temporária em instantes.`
-      );
       
+      // Verificar a resposta
+      if (response && response.message) {
+        setMessage(`✅ ${response.message}`);
+      } else {
+        setMessage(
+          `✅ Solicitação enviada com sucesso! Se o email ${email} estiver cadastrado, você receberá instruções em instantes.`
+        );
+      }
+      
+      // Fechar o modal após 5 segundos
       setTimeout(() => {
         onClose();
       }, 5000);
-    } catch (error) {
-      setMessage('❌ Erro de conexão. Verifique sua internet e tente novamente.');
+      
+    } catch (error: any) {
+      console.error('❌ Erro no forgot password:', error);
+      
+      // Mensagem de erro mais amigável
+      if (error.message?.includes('404')) {
+        setMessage('❌ Endpoint de recuperação não encontrado. Contacte o administrador.');
+      } else if (error.message?.includes('network') || error.message?.includes('Failed to fetch')) {
+        setMessage('❌ Erro de conexão. Verifique sua internet e tente novamente.');
+      } else {
+        setMessage(`❌ ${error.message || 'Erro ao solicitar recuperação de senha.'}`);
+      }
     } finally {
       setIsLoading(false);
     }
@@ -66,9 +84,11 @@ export const ForgotPasswordModal = ({ onClose }: ForgotPasswordModalProps) => {
         
         {message && (
           <div className={`mb-4 p-3 rounded-lg text-sm ${
-            message.includes('enviado') 
-              ? 'bg-emerald-50 text-emerald-700' 
-              : 'bg-rose-50 text-rose-700'
+            message.includes('✅') 
+              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' 
+              : message.includes('❌')
+                ? 'bg-rose-50 text-rose-700 border border-rose-200'
+                : 'bg-blue-50 text-blue-700 border border-blue-200'
           }`}>
             {message}
           </div>

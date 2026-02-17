@@ -72,23 +72,14 @@ export const TaskCard = ({
   
   // Verificar se StatusOrder é um array válido
   if (!Array.isArray(StatusOrder) || StatusOrder.length === 0) {
-    console.error('❌ StatusOrder não é um array válido:', StatusOrder);
     return <div>Erro: StatusOrder não configurado</div>;
   }
   
-  // Encontrar índice no StatusOrder
   const currentIndex = StatusOrder.indexOf(mappedStatus);
-  
-  // Verificar se o status atual está no fluxo normal de trabalho
   const isInWorkflow = currentIndex !== -1;
-  
-  // Status terminais que não podem ser alterados
   const isTerminal = mappedStatus === TaskStatus.ATRASADA;
-  
   const isFinished = mappedStatus === TaskStatus.TERMINADO;
   const isClosed = mappedStatus === TaskStatus.FECHADO || isTerminal;
-  
-  // Calcular próximo e anterior status
   let nextStatus = null;
   let prevStatus = null;
   
@@ -104,22 +95,9 @@ export const TaskCard = ({
   const isTaskMember = task.responsibleId === user.id || 
                       task.intervenientes?.includes(user.id);
   const isAdmin = user.role === UserRole.ADMIN;
+
   
-  // Log detalhado
-  console.log('🎯 TaskCard Debug:', {
-    statusOriginal: task.status,
-    statusMapeado: mappedStatus,
-    currentIndex,
-    isInWorkflow,
-    isTerminal,
-    nextStatus,
-    prevStatus,
-    statusOrder: StatusOrder,
-    podeAvancar: !isClosed && nextStatus !== null,
-    podeRecuar: !isClosed && prevStatus !== null
-  });
-  
-  // ✅ PERMISSÕES: MEMBROS DA TAREFA E ADMIN PODEM AGIR
+  // PERMISSÕES: MEMBROS DA TAREFA E ADMIN PODEM AGIR
   const canAdvance = !isClosed && nextStatus !== null && (isAdmin || isTaskMember);
   const canRegress = !isClosed && prevStatus !== null && (isAdmin || isTaskMember);
 
@@ -133,16 +111,13 @@ export const TaskCard = ({
   // Handler para avançar com loading
   const handleAdvance = async () => {
     if (!finalCanAdvance) {
-      console.log('❌ Não pode avançar');
       return;
     }
-    console.log('✅ Pode avançar, chamando onAdvance...');
     setIsLoading(true);
     try {
       await onAdvance();
       console.log('✅ onAdvance concluído');
     } catch (error) {
-      console.error('❌ Erro ao avançar:', error);
     } finally {
       setIsLoading(false);
     }
@@ -151,16 +126,12 @@ export const TaskCard = ({
   // Handler para recuar com loading
   const handleRegress = async () => {
     if (!finalCanRegress || !onRegress) {
-      console.log('❌ Não pode recuar');
       return;
     }
-    console.log('✅ Pode recuar, chamando onRegress...');
     setIsLoading(true);
     try {
       await onRegress();
-      console.log('✅ onRegress concluído');
     } catch (error) {
-      console.error('❌ Erro ao recuar:', error);
     } finally {
       setIsLoading(false);
     }

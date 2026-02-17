@@ -9,7 +9,7 @@ type Json = Record<string, any>;
 function getApiBase(): string {
   // Usar variável de ambiente do Vite ou fallback para localhost
   //const viteBase = import.meta.env.VITE_API_BASE_URL;
-  const base = "https://ilungi-gestora-api-s1dm.onrender.com";
+  const base = "http://localhost:8080";
   return String(base || "").replace(/\/+$/, "");
 }
 
@@ -150,7 +150,6 @@ export const apiAuth = {
     return handleResponse(res);
   },
 
-
   validateSetupToken: async (token: string) => {
     const response = await fetch(`${API_BASE}/auth/validate-setup-token/${token}`, {
       method: 'GET',
@@ -168,6 +167,69 @@ export const apiAuth = {
     return handleResponse(response);
   },
 
+  // ✅ NOVOS MÉTODOS PARA RECUPERAÇÃO DE SENHA
+  forgotPassword: async (email: string) => {
+    const url = `${API_BASE}/auth/forgot-password`;
+    console.log('📤 Forgot Password URL:', url, 'Email:', email);
+    
+    try {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email }),
+      });
+
+      const data = await handleResponse(response);
+      console.log('📥 Resposta forgot-password:', data);
+      return data;
+    } catch (error) {
+      console.error('❌ Erro no forgot-password:', error);
+      throw error;
+    }
+  },
+
+  resetPassword: async (token: string, newPassword: string, confirmPassword: string) => {
+    const url = `${API_BASE}/auth/reset-password`;
+    console.log('📤 Reset Password URL:', url);
+    
+    try {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ 
+          token, 
+          newPassword, 
+          confirmPassword 
+        }),
+      });
+
+      const data = await handleResponse(response);
+      console.log('📥 Resposta reset-password:', data);
+      return data;
+    } catch (error) {
+      console.error('❌ Erro no reset-password:', error);
+      throw error;
+    }
+  },
+
+  validateResetToken: async (token: string) => {
+    const url = `${API_BASE}/auth/validate-reset-token/${token}`;
+    console.log('📤 Validate Reset Token URL:', url);
+    
+    try {
+      const response = await fetch(url, {
+        method: "GET",
+        headers: { "Content-Type": "application/json" },
+      });
+
+      const data = await handleResponse(response);
+      console.log('📥 Resposta validate-reset-token:', data);
+      return data;
+    } catch (error) {
+      console.error('❌ Erro ao validar token:', error);
+      throw error;
+    }
+  },
 };
 
 // =================== TASKS ===================
@@ -276,12 +338,12 @@ export const apiAdminTasks = {
     return handleResponse(res);
   },
 
- createWithResponsibles: async (taskData: {
+  createWithResponsibles: async (taskData: {
     title: string;
     description?: string;
     daysToFinish?: number;
     status?: string;
-    responsibles: Array<number>; // ❌ Mude para Array<number>
+    responsibles: Array<number>;
   }) => {
     // Garantir que responsibles sejam números
     const processedData = {
@@ -534,6 +596,7 @@ export const mapTaskFromAPI = (apiTask: any) => {
     deadlineType: 'days' // Default para backend Spring
   };
 };
+
 export const mapCommentFromAPI = (apiComment: any) => {
   return {
     id: String(apiComment.id || ""),

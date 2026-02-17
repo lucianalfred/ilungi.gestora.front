@@ -425,29 +425,29 @@ export const AppPage = () => {
               getAvatarUrl={getAvatarUrl}
             />
           )}
-
-          {/* Profile View */}
-          {activeTab === 'profile' && user && (
-            <ProfileView 
-              user={user}
-              users={users}
-              setUsers={setUsers}
-              setUser={setUser}
-              profilePassword={profilePassword}
-              setProfilePassword={setProfilePassword}
-              profilePasswordConfirm={profilePasswordConfirm}
-              setProfilePasswordConfirm={setProfilePasswordConfirm}
-              profilePasswordError={profilePasswordError}
-              setProfilePasswordError={setProfilePasswordError}
-              profilePasswordSuccess={profilePasswordSuccess}
-              setProfilePasswordSuccess={setProfilePasswordSuccess}
-              setActiveTabSafe={setActiveTabSafe}
-              onAvatarUpload={handleAvatarUpload}
-              getAvatarUrl={getAvatarUrl}
-              updateUser={updateUser}
-              addNotification={addNotification}
-            />
-          )}
+      
+      {/* Profile View */}
+      {activeTab === 'profile' && user && (
+      <ProfileView 
+      user={user}
+      users={users}
+      setUser={setUser}
+   
+      profilePassword={profilePassword}
+      setProfilePassword={setProfilePassword}
+      profilePasswordConfirm={profilePasswordConfirm}
+      setProfilePasswordConfirm={setProfilePasswordConfirm}
+      profilePasswordError={profilePasswordError}
+      setProfilePasswordError={setProfilePasswordError}
+      profilePasswordSuccess={profilePasswordSuccess}
+      setProfilePasswordSuccess={setProfilePasswordSuccess}
+      setActiveTabSafe={setActiveTabSafe}
+      onAvatarUpload={handleAvatarUpload}
+      getAvatarUrl={getAvatarUrl}
+      updateUser={updateUser}
+      addNotification={addNotification}
+      />
+      )}
 
           {/* Reports View */}
           {activeTab === 'reports' && user?.role === UserRole.ADMIN && (
