@@ -7,10 +7,10 @@ type Json = Record<string, any>;
 
 // Obter URL base da API
 function getApiBase(): string {
-  // Usar variável de ambiente do Vite ou fallback para localhost
-  //const viteBase = import.meta.env.VITE_API_BASE_URL;
-  const base = "http://213.199.62.60:8083";
-  return String(base || "").replace(/\/+$/, "");
+  if (typeof window !== 'undefined' && window.location.hostname.includes('vercel.app')) {
+    return '/api';  
+  }
+  return "http://213.199.62.60:8083";
 }
 
 const API_BASE = getApiBase();

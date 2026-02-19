@@ -9,5 +9,11 @@
   "routes": [
     { "src": "/assets/(.*)", "dest": "/assets/$1" },
     { "src": "/(.*)", "dest": "/index.html" }
+  ],
+   "rewrites": [
+    {
+      "source": "/api/:match*",
+      "destination": "http://213.199.62.60:8083/:match*"
+    }
   ]
 }
