@@ -22,3 +22,71 @@ body {
 
 /* Pequenos ajustes de legibilidade */
 h1, h2, h3, h4, h5, h6 { line-height: 1.1; }
+
+/* ===== MODO NOTURNO - CORES ATUALIZADAS ===== */
+
+/* Background principal no modo escuro */
+.dark body,
+.dark #root {
+	background-color: #0f172a;
+}
+
+/* Cards e containers no modo escuro */
+.dark .bg-white,
+.dark .bg-slate-900 {
+	background-color: #1e293b;
+}
+
+/* Borders no modo escuro */
+.dark .border-slate-100,
+.dark .border-slate-200 {
+	border-color: #334155;
+}
+
+.dark .border-slate-800 {
+	border-color: #334155;
+}
+
+/* Textos no modo escuro */
+.dark .text-slate-900,
+.dark .text-slate-800,
+.dark .text-slate-700 {
+	color: #f1f5f9;
+}
+
+.dark .text-slate-600,
+.dark .text-slate-500,
+.dark .text-slate-400 {
+	color: #94a3b8;
+}
+
+/* Inputs no modo escuro */
+.dark input,
+.dark textarea,
+.dark select {
+	background-color: #1e293b;
+	border-color: #334155;
+	color: #f1f5f9;
+}
+
+.dark input::placeholder,
+.dark textarea::placeholder {
+	color: #64748b;
+}
+
+/* Sidebar no modo escuro */
+.dark aside {
+	background-color: #1e293b;
+	border-color: #334155;
+}
+
+/* Header no modo escuro */
+.dark header {
+	background-color: #1e293b;
+	border-color: #334155;
+}
+
+/* Elementos hover no modo escuro */
+.dark .hover\:bg-slate-800:hover {
+	background-color: #334155;
+}

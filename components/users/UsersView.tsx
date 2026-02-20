@@ -5,7 +5,7 @@ import { UserCard } from './UserCard';
 import { UserModal } from './UserModal';
 import { LoadingSpinner, LoadingOverlay } from '../shared/LoadingSpinner';
 import { useLanguage } from '../../hooks/useLanguage';
-import { User, UserRole } from '../../types'; // ✅ Importar do types, não do apiService
+import { User, UserRole } from '../../types';
 
 interface UsersViewProps {
   users: User[];
@@ -80,117 +80,126 @@ export const UsersView = ({
     );
   }
 
+  // Determina se deve mostrar o formulário ou a lista
+  const showUserForm = isAddUserOpen || editingUserId;
+
   return (
     <div className="max-w-7xl mx-auto space-y-6 sm:space-y-10 animate-in">
       
-      {/* Header com estatísticas */}
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-        <div>
-          <h3 className="text-lg font-black text-slate-900 dark:text-white">
-            Gestão de Utilizadores
-          </h3>
-          <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
-            Total: {stats.total} utilizadores ({stats.admins} admin, {stats.employees} funcionários)
-          </p>
-        </div>
-        <Button 
-          onClick={() => setIsAddUserOpen(true)} 
-          className="px-6 py-3"
-        >
-          <Plus size={18} className="mr-2"/> Adicionar Utilizador
-        </Button>
-      </div>
-
-      {/* Filtros */}
-      <div className="bg-white dark:bg-slate-900 rounded-2xl p-4 border border-slate-100 dark:border-slate-800 shadow-sm">
-        <div className="flex flex-col lg:flex-row gap-4">
-          {/* Search */}
-          <div className="relative flex-1">
-            <input 
-              placeholder="Pesquisar por nome, email ou cargo..." 
-              value={searchQuery}
-              onChange={e => setSearchQuery(e.target.value)}
-              className="w-full pl-10 pr-4 py-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all font-medium text-sm"
+      {/* Mostrar formulário em vez da lista quando está aberto */}
+      {showUserForm ? (
+        <>
+          {isAddUserOpen && (
+            <UserModal
+              isOpen={true}
+              onClose={handleCloseAdd}
+              onSuccess={() => {
+                handleCloseAdd();
+              }}
+              users={users}
+              currentUser={currentUser}
             />
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-          </div>
-          
-          {/* Role Filter */}
-          <div className="relative min-w-[200px]">
-            <select 
-              value={roleFilter}
-              onChange={e => setRoleFilter(e.target.value)}
-              className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 appearance-none cursor-pointer font-medium text-sm"
-            >
-              <option value="all">Todos os perfis</option>
-              <option value={UserRole.ADMIN}>Administradores</option>
-              <option value={UserRole.EMPLOYEE}>Funcionários</option>
-            </select>
-            <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={18} />
-          </div>
-        </div>
-      </div>
+          )}
 
-      {/* Users Grid */}
-      <LoadingOverlay isLoading={isLoading}>
-        {sortedUsers.length > 0 ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
-            {sortedUsers.map(u => (
-              <UserCard 
-                key={u.id}
-                user={u}
-                currentUser={currentUser}
-                onEdit={handleEditUser}
-                onDelete={onDeleteUser}
-                onAvatarUpload={onAvatarUpload}
-                getAvatarUrl={getAvatarUrl}
-              />
-            ))}
-          </div>
-        ) : (
-          <div className="bg-white dark:bg-slate-900 rounded-2xl p-12 text-center border border-slate-100 dark:border-slate-800">
-            <div className="w-20 h-20 bg-slate-100 dark:bg-slate-800 rounded-full flex items-center justify-center mx-auto mb-4">
-              <UsersIcon size={32} className="text-slate-400" />
+          {editingUserId && (
+            <UserModal
+              isOpen={true}
+              onClose={handleCloseEdit}
+              editingUserId={editingUserId}
+              onSuccess={handleCloseEdit}
+              users={users}
+              currentUser={currentUser}
+            />
+          )}
+        </>
+      ) : (
+        <>
+          {/* Header com estatísticas */}
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+            <div>
+              <h3 className="text-lg font-black text-slate-900 dark:text-white">
+                Gestão de Utilizadores
+              </h3>
+              <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
+                Total: {stats.total} utilizadores ({stats.admins} admin, {stats.employees} funcionários)
+              </p>
             </div>
-            <h4 className="text-lg font-bold text-slate-900 dark:text-white mb-2">
-              Nenhum utilizador encontrado
-            </h4>
-            <p className="text-slate-500 dark:text-slate-400 mb-6">
-              {searchQuery || roleFilter !== 'all' 
-                ? 'Tente ajustar os filtros de pesquisa.'
-                : 'Clique no botão "Adicionar Utilizador" para começar.'}
-            </p>
-            {!searchQuery && roleFilter === 'all' && (
-              <Button onClick={() => setIsAddUserOpen(true)}>
-                <Plus size={18}/> Adicionar Utilizador
-              </Button>
-            )}
+            <Button 
+              onClick={() => setIsAddUserOpen(true)} 
+              className="px-6 py-3"
+            >
+              <Plus size={18} className="mr-2"/> Adicionar Utilizador
+            </Button>
           </div>
-        )}
-      </LoadingOverlay>
 
-      {/* Modals */}
-      {isAddUserOpen && (
-        <UserModal
-          isOpen={isAddUserOpen}
-          onClose={handleCloseAdd}
-          onSuccess={() => {
-            handleCloseAdd();
-          }}
-          users={users}
-          currentUser={currentUser}
-        />
-      )}
+          {/* Filtros */}
+          <div className="bg-white dark:bg-slate-900 rounded-2xl p-4 border border-slate-100 dark:border-slate-800 shadow-sm">
+            <div className="flex flex-col lg:flex-row gap-4">
+              {/* Search */}
+              <div className="relative flex-1">
+                <input 
+                  placeholder="Pesquisar por nome, email ou cargo..." 
+                  value={searchQuery}
+                  onChange={e => setSearchQuery(e.target.value)}
+                  className="w-full pl-10 pr-4 py-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all font-medium text-sm"
+                />
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+              </div>
+              
+              {/* Role Filter */}
+              <div className="relative min-w-[200px]">
+                <select 
+                  value={roleFilter}
+                  onChange={e => setRoleFilter(e.target.value)}
+                  className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 appearance-none cursor-pointer font-medium text-sm"
+                >
+                  <option value="all">Todos os perfis</option>
+                  <option value={UserRole.ADMIN}>Administradores</option>
+                  <option value={UserRole.EMPLOYEE}>Funcionários</option>
+                </select>
+                <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={18} />
+              </div>
+            </div>
+          </div>
 
-      {editingUserId && (
-        <UserModal
-          isOpen={!!editingUserId}
-          onClose={handleCloseEdit}
-          editingUserId={editingUserId}
-          onSuccess={handleCloseEdit}
-          users={users}
-          currentUser={currentUser}
-        />
+          {/* Users Grid */}
+          <LoadingOverlay isLoading={isLoading}>
+            {sortedUsers.length > 0 ? (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
+                {sortedUsers.map(u => (
+                  <UserCard 
+                    key={u.id}
+                    user={u}
+                    currentUser={currentUser}
+                    onEdit={handleEditUser}
+                    onDelete={onDeleteUser}
+                    onAvatarUpload={onAvatarUpload}
+                    getAvatarUrl={getAvatarUrl}
+                  />
+                ))}
+              </div>
+            ) : (
+              <div className="bg-white dark:bg-slate-900 rounded-2xl p-12 text-center border border-slate-100 dark:border-slate-800">
+                <div className="w-20 h-20 bg-slate-100 dark:bg-slate-800 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <UsersIcon size={32} className="text-slate-400" />
+                </div>
+                <h4 className="text-lg font-bold text-slate-900 dark:text-white mb-2">
+                  Nenhum utilizador encontrado
+                </h4>
+                <p className="text-slate-500 dark:text-slate-400 mb-6">
+                  {searchQuery || roleFilter !== 'all' 
+                    ? 'Tente ajustar os filtros de pesquisa.'
+                    : 'Clique no botão "Adicionar Utilizador" para começar.'}
+                </p>
+                {!searchQuery && roleFilter === 'all' && (
+                  <Button onClick={() => setIsAddUserOpen(true)}>
+                    <Plus size={18}/> Adicionar Utilizador
+                  </Button>
+                )}
+              </div>
+            )}
+          </LoadingOverlay>
+        </>
       )}
     </div>
   );

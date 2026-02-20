@@ -38,7 +38,8 @@ const createUser = async (userData: Partial<User>): Promise<User> => {
     name: userData.name!,
     email: userData.email!,
     phone: userData.phone,
-    role: userData.role || UserRole.EMPLOYEE
+    role: userData.role || UserRole.EMPLOYEE,
+    avatar: userData.avatar || ''
   });
   return mapUserFromAPI(data);
 };
@@ -48,7 +49,8 @@ const updateUser = async ({ id, ...userData }: Partial<User> & { id: string }): 
   const data = await apiAdminUsers.update(id, {
     name: userData.name,
     phone: userData.phone,
-    role: userData.role
+    role: userData.role,
+    avatar: userData.avatar || ''
   });
   return mapUserFromAPI(data);
 };

@@ -44,19 +44,7 @@ export const UserCard = ({
   return (
     <div className="bg-white dark:bg-slate-900 rounded-2xl p-6 border border-slate-100 dark:border-slate-800 shadow-sm hover:shadow-lg transition-all group relative overflow-hidden">
       
-      {/* Badge de Admin ou Destaque */}
-      {user.role === UserRole.ADMIN && (
-        <div className="absolute top-0 right-0 w-20 h-20 bg-emerald-500/10 rounded-bl-[40px] flex items-center justify-end p-4">
-          <Shield size={24} className="text-emerald-500" />
-        </div>
-      )}
 
-      {/* Badge de Utilizador Atual */}
-      {isCurrentUser && (
-        <div className="absolute top-0 left-0 w-20 h-20 bg-blue-500/10 rounded-br-[40px] flex items-center justify-start p-4">
-          <Star size={20} className="text-blue-500" />
-        </div>
-      )}
 
       <div className="flex gap-4">
         {/* Avatar */}
@@ -106,13 +94,11 @@ export const UserCard = ({
               
               <div className="flex items-center gap-1">
                 {user.role === UserRole.ADMIN ? (
-                  <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 dark:bg-emerald-900/20 px-2 py-0.5 rounded-full flex items-center gap-1">
-                    <Shield size={10} />
+                  <span className="text-[10px] font-bold text-slate-600 bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded-full">
                     Administrador
                   </span>
                 ) : (
-                  <span className="text-[10px] font-bold text-blue-600 bg-blue-50 dark:bg-blue-900/20 px-2 py-0.5 rounded-full flex items-center gap-1">
-                    <Star size={10} />
+                  <span className="text-[10px] font-bold text-slate-600 bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded-full">
                     Funcionário
                   </span>
                 )}
@@ -125,7 +111,7 @@ export const UserCard = ({
                 {canEdit && (
                   <button 
                     onClick={() => onEdit(user.id)} 
-                    className="p-2 rounded-lg text-slate-400 hover:bg-emerald-50 hover:text-emerald-600 transition-colors"
+                    className="p-2 rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800 transition-colors"
                     title="Editar utilizador"
                   >
                     <Pencil size={16} />
@@ -134,7 +120,7 @@ export const UserCard = ({
                 {canDelete && (
                   <button 
                     onClick={() => onDelete(user.id)} 
-                    className="p-2 rounded-lg text-slate-400 hover:bg-rose-50 hover:text-rose-500 transition-colors"
+                    className="p-2 rounded-lg text-slate-400 hover:bg-slate-100 hover:text-rose-500 dark:hover:bg-slate-800 transition-colors"
                     title="Eliminar utilizador"
                   >
                     <Trash2 size={16} />

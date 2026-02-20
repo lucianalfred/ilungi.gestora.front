@@ -390,7 +390,7 @@ export const apiAdminUsers = {
     return handleResponse(res);
   },
 
-  create: async (data: { name: string; email: string; phone?: string; role?: string }) => {
+  create: async (data: { name: string; email: string; phone?: string; role?: string; avatar?: string }) => {
     const response = await fetch(`${API_BASE}/admin/users`, {
       method: "POST",
       headers: getHeaders(),
@@ -398,13 +398,14 @@ export const apiAdminUsers = {
         name: data.name,
         email: data.email,
         phone: data.phone || "",
-        role: data.role || "USER"
+        role: data.role || "USER",
+        avatar: data.avatar || ""
       }),
     });
     return handleResponse(response);
   },
 
-  update: async (id: string, data: { name?: string; phone?: string; role?: string }) => {
+  update: async (id: string, data: { name?: string; phone?: string; role?: string; avatar?: string }) => {
     const response = await fetch(`${API_BASE}/admin/users/${id}`, {
       method: "PUT",
       headers: getHeaders(),

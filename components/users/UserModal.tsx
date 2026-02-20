@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, AlertTriangle, Mail, User as UserIcon, Briefcase, Phone, Shield, Star } from 'lucide-react';
+import { X, AlertTriangle, Mail, User as UserIcon, Briefcase, Phone, Shield, Upload, Camera } from 'lucide-react';
 import { Button } from '../shared/Button';
 import { User, UserRole } from '../../types';
 import { useLanguage } from '../../hooks/useLanguage';
@@ -27,20 +27,22 @@ export const UserModal = ({
   
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [avatarPreview, setAvatarPreview] = useState<string | null>(null);
+  const [avatarFile, setAvatarFile] = useState<File | null>(null);
   const [formData, setFormData] = useState({
     name: '',
     email: '',
     phone: '',
     position: '',
     department: '',
-    role: UserRole.EMPLOYEE
+    role: UserRole.EMPLOYEE,
+    avatar: ''
   });
 
   const editingUser = editingUserId 
     ? users.find(u => u.id === editingUserId) 
     : null;
 
-  // Prevenir scroll do body quando modal está aberto
   useEffect(() => {
     if (isOpen) {
       document.body.style.overflow = 'hidden';
@@ -52,7 +54,6 @@ export const UserModal = ({
     };
   }, [isOpen]);
 
-  // Carregar dados do usuário quando estiver editando
   useEffect(() => {
     if (editingUser) {
       setFormData({
@@ -61,23 +62,26 @@ export const UserModal = ({
         phone: editingUser.phone || '',
         position: editingUser.position || '',
         department: editingUser.department || '',
-        role: editingUser.role || UserRole.EMPLOYEE
+        role: editingUser.role || UserRole.EMPLOYEE,
+        avatar: editingUser.avatar || ''
       });
+      setAvatarPreview(editingUser.avatar || null);
     } else {
-      // Reset form quando for criar novo
       setFormData({
         name: '',
         email: '',
         phone: '',
         position: '',
         department: '',
-        role: UserRole.EMPLOYEE
+        role: UserRole.EMPLOYEE,
+        avatar: ''
       });
+      setAvatarPreview(null);
     }
+    setAvatarFile(null);
     setError(null);
   }, [editingUser, editingUserId]);
 
-  // Validar formulário
   const validateForm = () => {
     if (!formData.name.trim()) {
       setError('Por favor, preencha o nome.');
@@ -95,7 +99,6 @@ export const UserModal = ({
       return false;
     }
 
-    // Verificar email duplicado (apenas para criação)
     if (!editingUserId) {
       const emailExists = users.some(u => 
         u.email.toLowerCase() === formData.email.toLowerCase()
@@ -106,7 +109,6 @@ export const UserModal = ({
       }
     }
 
-    // Validar telefone (opcional)
     if (formData.phone) {
       const phoneRegex = /^[0-9+\-\s()]{9,}$/;
       if (!phoneRegex.test(formData.phone)) {
@@ -124,6 +126,33 @@ export const UserModal = ({
     if (error) setError(null);
   };
 
+  const handleAvatarChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      if (!file.type.startsWith('image/')) {
+        setError('Por favor, selecione um arquivo de imagem válido.');
+        return;
+      }
+      if (file.size > 5 * 1024 * 1024) {
+        setError('A imagem deve ter no máximo 5MB.');
+        return;
+      }
+      setAvatarFile(file);
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setAvatarPreview(reader.result as string);
+      };
+      reader.readAsDataURL(file);
+      setError(null);
+    }
+  };
+
+  const handleAvatarRemove = () => {
+    setAvatarFile(null);
+    setAvatarPreview(null);
+    setFormData(prev => ({ ...prev, avatar: '' }));
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
@@ -134,18 +163,30 @@ export const UserModal = ({
 
     try {
       if (editingUserId) {
-        // Atualizar usuário existente
-        await updateUser(editingUserId, {
+        const updateData: any = {
           name: formData.name,
           email: formData.email,
           phone: formData.phone,
           position: formData.position,
           department: formData.department,
-          role: formData.role
-        });
+          role: formData.role,
+          avatar: avatarPreview || ''
+        };
+        
+        await updateUser(editingUserId, updateData);
+        
+        // Salvar avatar no localStorage como backup
+        if (avatarPreview) {
+          localStorage.setItem(`gestora_avatar_${editingUserId}`, avatarPreview);
+        } else {
+          localStorage.removeItem(`gestora_avatar_${editingUserId}`);
+        }
       } else {
-        // Criar novo usuário
-        await createUser(formData);
+        const userData = {
+          ...formData,
+          avatar: avatarPreview || ''
+        };
+        await createUser(userData);
       }
       
       onSuccess();
@@ -163,173 +204,169 @@ export const UserModal = ({
     }
   };
 
-  const handleOverlayClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (e.target === e.currentTarget) {
-      handleClose();
-    }
-  };
-
   if (!isOpen) return null;
 
   const isEditing = !!editingUserId;
   const isSelf = editingUserId === currentUser.id;
 
   return (
-    <div 
-      className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-[100] flex items-start justify-center p-4 overflow-y-auto"
-      onClick={handleOverlayClick}
-      style={{ 
-        position: 'fixed',
-        top: 0,
-        left: 0,
-        right: 0,
-        bottom: 0,
-        overflowY: 'auto',
-        WebkitOverflowScrolling: 'touch'
-      }}
-    >
-      {/* Container centralizado com margin auto para scroll */}
-      <div className="min-h-full flex items-center justify-center py-6 sm:py-10 w-full">
-        <div 
-          className="bg-white dark:bg-slate-900 w-full max-w-md rounded-2xl p-6 sm:p-8 border border-slate-100 dark:border-slate-800 shadow-2xl relative animate-in my-auto"
-          onClick={(e) => e.stopPropagation()}
-          style={{
-            maxHeight: 'calc(100vh - 80px)',
-            overflowY: 'auto'
-          }}
-        >
-          
-          {/* Header - Sticky */}
-          <div className="sticky top-0 bg-white dark:bg-slate-900 pt-0 pb-4 z-10 border-b border-slate-100 dark:border-slate-800 mb-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="p-2 bg-emerald-50 dark:bg-emerald-900/20 rounded-lg">
-                  {isEditing ? (
-                    <Briefcase size={20} className="text-emerald-600" />
-                  ) : (
-                    <UserIcon size={20} className="text-emerald-600" />
-                  )}
-                </div>
-                <h2 className="text-xl font-black text-slate-900 dark:text-white">
-                  {isEditing ? 'Editar Utilizador' : 'Novo Utilizador'}
-                </h2>
-              </div>
-              <button 
-                onClick={handleClose}
-                className="p-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800"
-                disabled={isLoading}
-              >
-                <X size={20} />
-              </button>
+    <div className="min-h-[calc(90vh-200px)] bg-white dark:bg-slate-900 rounded-2xl sm:rounded-3xl shadow-2xl py-4 px-2 sm:px-3">
+      <div className="w-full max-w-4xl mx-auto">
+        
+        {/* Header com VOLTAR e NOVO UTILIZADOR */}
+        <div className="flex items-center justify-between mb-6">
+          <button 
+            onClick={handleClose}
+            className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors flex items-center gap-2 text-sm font-bold uppercase tracking-wider"
+            disabled={isLoading}
+          >
+            <X size={18} /> VOLTAR
+          </button>
+          <h1 className="text-lg sm:text-xl font-black tracking-tighter text-slate-900 dark:text-white uppercase">
+            {isEditing ? 'EDITAR UTILIZADOR' : 'NOVO UTILIZADOR'}
+          </h1>
+        </div>
+
+        {/* Error Message */}
+        {error && (
+          <div className="mb-6 p-3 bg-rose-50 border border-rose-200">
+            <div className="flex items-start gap-2">
+              <AlertTriangle className="text-rose-500 mt-0.5 flex-shrink-0" size={16} />
+              <p className="text-rose-700 text-sm">{error}</p>
             </div>
           </div>
+        )}
 
-          {/* Error Message */}
-          {error && (
-            <div className="mb-6 p-4 bg-rose-50 border border-rose-200 rounded-lg">
-              <div className="flex items-start gap-3">
-                <AlertTriangle className="text-rose-500 mt-0.5 flex-shrink-0" size={18} />
-                <div>
-                  <h4 className="font-bold text-rose-700 text-sm mb-1">Erro de validação</h4>
-                  <p className="text-rose-600 text-xs">{error}</p>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Form - Scrollável */}
-          <form onSubmit={handleSubmit} className="space-y-4">
+        {/* Form - ajustado para ocupar melhor o espaço */}
+        <form onSubmit={handleSubmit} className="w-full">
+          <div className="space-y-4">
             
-            {/* Nome */}
-            <div>
-              <label className="block text-[10px] font-black uppercase text-slate-400 tracking-widest mb-1.5">
-                Nome Completo <span className="text-rose-500">*</span>
-              </label>
+            {/* FOTO DE PERFIL */}
+            <div className="flex flex-col items-center mb-6">
               <div className="relative">
-                <input
-                  type="text"
-                  name="name"
-                  value={formData.name}
-                  onChange={handleInputChange}
-                  placeholder="João Silva"
-                  className="w-full pl-10 pr-4 py-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none transition-all font-bold text-sm"
-                  disabled={isLoading}
-                  required
-                  autoFocus
-                />
-                <UserIcon className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                <div className="w-24 h-24 rounded-full bg-slate-200 dark:bg-slate-700 flex items-center justify-center overflow-hidden border-4 border-white dark:border-slate-600 shadow-md">
+                  {avatarPreview ? (
+                    <img 
+                      src={avatarPreview} 
+                      alt="Avatar" 
+                      className="w-full h-full object-cover"
+                    />
+                  ) : (
+                    <UserIcon className="w-10 h-10 text-slate-400" />
+                  )}
+                </div>
+                <label 
+                  htmlFor="avatar-upload" 
+                  className="absolute bottom-0 right-0 bg-emerald-500 hover:bg-emerald-600 text-white p-2 rounded-full cursor-pointer shadow-lg transition-colors"
+                  title="Carregar foto de perfil"
+                >
+                  <Camera size={16} />
+                  <input
+                    id="avatar-upload"
+                    type="file"
+                    accept="image/*"
+                    onChange={handleAvatarChange}
+                    className="hidden"
+                    disabled={isLoading}
+                    aria-label="Carregar foto de perfil"
+                  />
+                </label>
+                {avatarPreview && (
+                  <button
+                    type="button"
+                    onClick={handleAvatarRemove}
+                    className="absolute top-0 right-0 bg-rose-500 hover:bg-rose-600 text-white p-1.5 rounded-full shadow-lg transition-colors"
+                    disabled={isLoading}
+                    title="Remover foto"
+                    aria-label="Remover foto de perfil"
+                  >
+                    <X size={12} />
+                  </button>
+                )}
               </div>
+              <p className="text-xs text-slate-400 mt-2">
+                Clique na câmera para alterar a foto
+              </p>
             </div>
 
-            {/* Email */}
+            {/* NOME COMPLETO */}
             <div>
-              <label className="block text-[10px] font-black uppercase text-slate-400 tracking-widest mb-1.5">
-                Email <span className="text-rose-500">*</span>
+              <label className="block text-xs font-bold uppercase text-slate-400 tracking-wider mb-1">
+                NOME COMPLETO
               </label>
-              <div className="relative">
-                <input
-                  type="email"
-                  name="email"
-                  value={formData.email}
-                  onChange={handleInputChange}
-                  placeholder="joao@empresa.com"
-                  className={`w-full pl-10 pr-4 py-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none transition-all font-bold text-sm ${
-                    isEditing ? 'opacity-75 cursor-not-allowed' : ''
-                  }`}
-                  disabled={isLoading || isEditing}
-                  required
-                />
-                <Mail className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-              </div>
+              <input
+                type="text"
+                name="name"
+                value={formData.name}
+                onChange={handleInputChange}
+                placeholder="Digite o nome completo"
+                className="w-full px-4 py-2.5 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 focus:border-emerald-500 outline-none font-bold text-sm rounded-lg"
+                disabled={isLoading}
+                required
+                autoFocus
+              />
+            </div>
+
+            {/* EMAIL */}
+            <div>
+              <label className="block text-xs font-bold uppercase text-slate-400 tracking-wider mb-1">
+                EMAIL
+              </label>
+              <input
+                type="email"
+                name="email"
+                value={formData.email}
+                onChange={handleInputChange}
+                placeholder="email@empresa.com"
+                className={`w-full px-4 py-2.5 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 focus:border-emerald-500 outline-none font-bold text-sm rounded-lg ${
+                  isEditing ? 'opacity-75 cursor-not-allowed' : ''
+                }`}
+                disabled={isLoading || isEditing}
+                required
+              />
               {isEditing && (
-                <p className="text-[9px] text-amber-600 dark:text-amber-400 mt-1">
+                <p className="text-xs text-amber-600 dark:text-amber-400 mt-1">
                   ⚠️ O email não pode ser alterado.
                 </p>
               )}
             </div>
 
-            {/* Telefone */}
+            {/* TELEFONE */}
             <div>
-              <label className="block text-[10px] font-black uppercase text-slate-400 tracking-widest mb-1.5">
-                Telefone
+              <label className="block text-xs font-bold uppercase text-slate-400 tracking-wider mb-1">
+                TELEFONE
               </label>
-              <div className="relative">
-                <input
-                  type="tel"
-                  name="phone"
-                  value={formData.phone}
-                  onChange={handleInputChange}
-                  placeholder="+244 999 999 999"
-                  className="w-full pl-10 pr-4 py-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none transition-all font-bold text-sm"
-                  disabled={isLoading}
-                />
-                <Phone className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-              </div>
+              <input
+                type="tel"
+                name="phone"
+                value={formData.phone}
+                onChange={handleInputChange}
+                placeholder="+244 999 999 999"
+                className="w-full px-4 py-2.5 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 focus:border-emerald-500 outline-none font-bold text-sm rounded-lg"
+                disabled={isLoading}
+              />
             </div>
 
-            {/* Cargo/Posição */}
+            {/* CARGO / POSIÇÃO */}
             <div>
-              <label className="block text-[10px] font-black uppercase text-slate-400 tracking-widest mb-1.5">
-                Cargo / Posição
+              <label className="block text-xs font-bold uppercase text-slate-400 tracking-wider mb-1">
+                CARGO / POSIÇÃO
               </label>
-              <div className="relative">
-                <input
-                  type="text"
-                  name="position"
-                  value={formData.position}
-                  onChange={handleInputChange}
-                  placeholder="Desenvolvedor Senior"
-                  className="w-full pl-10 pr-4 py-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none transition-all font-bold text-sm"
-                  disabled={isLoading}
-                />
-                <Briefcase className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-              </div>
+              <input
+                type="text"
+                name="position"
+                value={formData.position}
+                onChange={handleInputChange}
+                placeholder="Desenvolvedor Senior"
+                className="w-full px-4 py-2.5 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 focus:border-emerald-500 outline-none font-bold text-sm rounded-lg"
+                disabled={isLoading}
+              />
             </div>
 
-            {/* Departamento */}
+            {/* DEPARTAMENTO */}
             <div>
-              <label className="block text-[10px] font-black uppercase text-slate-400 tracking-widest mb-1.5">
-                Departamento
+              <label className="block text-xs font-bold uppercase text-slate-400 tracking-wider mb-1">
+                DEPARTAMENTO
               </label>
               <input
                 type="text"
@@ -337,40 +374,31 @@ export const UserModal = ({
                 value={formData.department}
                 onChange={handleInputChange}
                 placeholder="Tecnologia"
-                className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none transition-all font-bold text-sm"
+                className="w-full px-4 py-2.5 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 focus:border-emerald-500 outline-none font-bold text-sm rounded-lg"
                 disabled={isLoading}
               />
             </div>
 
-            {/* Função/Role */}
+            {/* PERFIL DE ACESSO */}
             <div>
-              <label className="block text-[10px] font-black uppercase text-slate-400 tracking-widest mb-1.5">
-                Perfil de Acesso
+              <label className="block text-xs font-bold uppercase text-slate-400 tracking-wider mb-1">
+                PERFIL DE ACESSO
               </label>
-              <div className="relative">
-                <select
-                  name="role"
-                  value={formData.role}
-                  onChange={handleInputChange}
-                  className={`w-full px-4 py-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none transition-all font-bold text-sm appearance-none ${
-                    isSelf ? 'opacity-75 cursor-not-allowed' : 'cursor-pointer'
-                  }`}
-                  disabled={isLoading || isSelf}
-                >
-                  <option value={UserRole.EMPLOYEE}>Funcionário</option>
-                  <option value={UserRole.ADMIN}>Administrador</option>
-                </select>
-                <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none">
-                  {formData.role === UserRole.ADMIN ? (
-                    <Shield size={16} className="text-emerald-500" />
-                  ) : (
-                    <Star size={16} className="text-blue-500" />
-                  )}
-                </div>
-              </div>
+              <select
+                name="role"
+                value={formData.role}
+                onChange={handleInputChange}
+                className={`w-full px-4 py-2.5 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 focus:border-emerald-500 outline-none font-bold text-sm rounded-lg ${
+                  isSelf ? 'opacity-75 cursor-not-allowed' : 'cursor-pointer'
+                }`}
+                disabled={isLoading || isSelf}
+              >
+                <option value={UserRole.EMPLOYEE}>Funcionário</option>
+                <option value={UserRole.ADMIN}>Administrador</option>
+              </select>
               {isSelf && (
-                <p className="text-[9px] text-amber-600 dark:text-amber-400 mt-1 flex items-center gap-1">
-                  <AlertTriangle size={10} />
+                <p className="text-xs text-amber-600 dark:text-amber-400 mt-1 flex items-center gap-1">
+                  <AlertTriangle size={12} />
                   Não pode alterar seu próprio perfil.
                 </p>
               )}
@@ -378,55 +406,51 @@ export const UserModal = ({
 
             {/* Info para novo usuário */}
             {!isEditing && (
-              <div className="p-4 bg-emerald-50 dark:bg-emerald-900/20 rounded-lg border border-emerald-100 dark:border-emerald-800">
-                <p className="text-[10px] text-emerald-700 dark:text-emerald-400 flex items-start gap-2">
-                  <Shield size={14} className="flex-shrink-0 mt-0.5" />
-                  <span>
-                    <span className="font-bold">Nota:</span> Uma senha temporária será gerada automaticamente e enviada por email para o utilizador.
-                  </span>
+              <div className="p-3 bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg">
+                <p className="text-xs text-slate-600 dark:text-slate-400">
+                  <span className="font-bold">NOTA:</span> Uma senha temporária será gerada automaticamente e enviada por email.
                 </p>
               </div>
             )}
 
             {/* Info para edição */}
             {isEditing && !isSelf && (
-              <div className="p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-100 dark:border-blue-800">
-                <p className="text-[9px] text-blue-700 dark:text-blue-400 flex items-center gap-2">
-                  <Briefcase size={12} />
+              <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                <p className="text-xs text-blue-700 flex items-center gap-2">
+                  <Briefcase size={14} />
                   A editar utilizador: <span className="font-bold">{editingUser?.name}</span>
                 </p>
               </div>
             )}
 
-            {/* Actions - Sticky no final */}
-            <div className="sticky bottom-0 bg-white dark:bg-slate-900 pt-4 pb-0 border-t border-slate-100 dark:border-slate-800 mt-6">
-              <div className="flex gap-3">
-                <Button 
-                  type="submit" 
-                  disabled={isLoading}
-                  className="flex-1"
-                >
-                  {isLoading ? (
-                    <>
-                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                      {isEditing ? 'A guardar...' : 'A criar...'}
-                    </>
-                  ) : (
-                    isEditing ? 'Guardar Alterações' : 'Criar Utilizador'
-                  )}
-                </Button>
-                <Button 
-                  type="button" 
-                  variant="ghost" 
-                  onClick={handleClose}
-                  disabled={isLoading}
-                >
-                  Cancelar
-                </Button>
-              </div>
+            {/* Botões */}
+            <div className="pt-6 flex gap-4">
+              <Button 
+                type="submit" 
+                disabled={isLoading}
+                className="flex-1 py-3 px-6 bg-[#10b981] hover:bg-[#059669] text-white font-bold text-sm uppercase tracking-wider rounded-xl shadow-lg transition-colors"
+              >
+                {isLoading ? (
+                  <span className="flex items-center justify-center gap-2">
+                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                    {isEditing ? 'A GUARDAR...' : 'A CRIAR...'}
+                  </span>
+                ) : (
+                  isEditing ? 'GUARDAR ALTERAÇÕES' : 'CRIAR UTILIZADOR'
+                )}
+              </Button>
+              <Button 
+                type="button" 
+                variant="ghost" 
+                onClick={handleClose}
+                disabled={isLoading}
+                className="px-8 py-3 text-sm font-bold uppercase tracking-wider rounded-xl transition-colors"
+              >
+                Cancelar
+              </Button>
             </div>
-          </form>
-        </div>
+          </div>
+        </form>
       </div>
     </div>
   );

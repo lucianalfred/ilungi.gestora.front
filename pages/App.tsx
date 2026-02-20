@@ -303,61 +303,6 @@ export const AppPage = () => {
               {theme === 'light' ? <Moon size={20}/> : <Sun size={20}/>}
             </button>
             
-            {/* Notifications */}
-            <div className="relative">
-              <button
-                onClick={() => setNotificationsOpen(!isNotificationsOpen)}
-                className="p-3 text-slate-400 relative"
-                aria-label="Notificações"
-              >
-                <Bell size={20} />
-                {notifications.filter(n => n.userId === user?.id && !n.isRead).length > 0 && (
-                  <span className="absolute -top-0.5 -right-0.5 bg-rose-500 text-white text-[9px] font-bold rounded-full h-4 min-w-[16px] px-1 flex items-center justify-center">
-                    {notifications.filter(n => n.userId === user?.id && !n.isRead).length}
-                  </span>
-                )}
-              </button>
-              
-              {/* Notifications Dropdown */}
-              {isNotificationsOpen && (
-                <div className="absolute right-0 mt-2 w-80 max-h-[380px] overflow-y-auto bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl z-[120]">
-                  <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100 dark:border-slate-800">
-                    <p className="text-xs font-black uppercase tracking-widest text-slate-500">
-                      {t.notifications}
-                    </p>
-                    <button
-                      onClick={markAllNotificationsAsRead}
-                      className="text-[10px] font-bold text-emerald-600 hover:text-emerald-700"
-                    >
-                      {t.markAllRead}
-                    </button>
-                  </div>
-                  <div className="p-2 space-y-2">
-                    {notifications.filter(n => n.userId === user?.id).length === 0 && (
-                      <div className="p-4 text-xs text-slate-400 text-center">
-                        {t.noNotifications}
-                      </div>
-                    )}
-                    {notifications.filter(n => n.userId === user?.id).map(n => (
-                      <div 
-                        key={n.id} 
-                        className={`px-3 py-2 rounded-xl text-xs ${
-                          n.isRead 
-                            ? 'bg-slate-50 dark:bg-slate-800 text-slate-500' 
-                            : 'bg-emerald-50 dark:bg-emerald-900/20 text-slate-700'
-                        }`}
-                      >
-                        <p className="font-semibold">{n.message}</p>
-                        <p className="text-[10px] text-slate-400 mt-1">
-                          {new Date(n.timestamp).toLocaleString('pt-PT')}
-                        </p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-
             {/* User Profile */}
             <div className="flex items-center gap-3 sm:gap-4 pl-4 sm:pl-6 border-l border-slate-100 dark:border-slate-800">
               <div className="text-right hidden sm:block">
@@ -392,7 +337,6 @@ export const AppPage = () => {
               stats={stats} 
               tasks={tasks} 
               users={users}
-              visibleActivities={visibleActivities} 
               user={user}
             />
           )}
