@@ -175,7 +175,7 @@ export const UserModal = ({
         
         await updateUser(editingUserId, updateData);
         
-        // Salvar avatar no localStorage como backup
+        // Também salvar no localStorage como backup
         if (avatarPreview) {
           localStorage.setItem(`gestora_avatar_${editingUserId}`, avatarPreview);
         } else {

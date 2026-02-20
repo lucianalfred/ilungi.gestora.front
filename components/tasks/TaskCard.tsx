@@ -178,11 +178,11 @@ export const TaskCard = ({
         <h3 className="text-lg sm:text-2xl font-black tracking-tight leading-tight group-hover:text-[#10b981] transition-colors">
           {task.title}
         </h3>
-        <p className="text-xs sm:text-sm text-slate-400 font-medium leading-relaxed line-clamp-3">
+        <p className="text-xs sm:text-sm text-slate-900 dark:text-slate-200 font-medium leading-relaxed">
           {task.description}
         </p>
         {respName && (
-          <p className="text-[10px] font-bold text-slate-500 uppercase">
+          <p className="text-[10px] font-bold text-slate-800 dark:text-slate-300 uppercase">
             Responsável: {respName}{extra}
           </p>
         )}

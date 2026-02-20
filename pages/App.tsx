@@ -1,7 +1,7 @@
 // src/pages/App.tsx
 import React, { useState, useRef, useEffect, useContext } from 'react';
 import { 
-  LayoutDashboard, CheckSquare, Users, LogOut, Bell, 
+  LayoutDashboard, CheckSquare, Users, LogOut, Bell, Check,
   Menu, ChevronLeftCircle, Moon, Sun, User as UserIcon,
   BarChart2, X, Workflow, ChevronLeft
 } from 'lucide-react';
@@ -52,7 +52,7 @@ export const AppPage = () => {
     deleteUser 
   } = useUsers();
   
-  const { notifications, markAllNotificationsAsRead, addNotification } = useNotifications();
+  const { notifications, markAllNotificationsAsRead, markNotificationAsRead, addNotification } = useNotifications();
   const { visibleActivities, addSystemActivity } = useActivities();
   const { activeTab, setActiveTab, setView } = useNavigation();
   const { lang, setLang, t } = useLanguage();
@@ -68,6 +68,19 @@ export const AppPage = () => {
   const [isAppSidebarOpen, setAppSidebarOpen] = useState(false);
   const [isNotificationsOpen, setNotificationsOpen] = useState(false);
   const [uploadingAvatarFor, setUploadingAvatarFor] = useState<string | null>(null);
+  const notificationsRef = useRef<HTMLDivElement>(null);
+  
+  // Click outside handler for notifications dropdown
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (notificationsRef.current && !notificationsRef.current.contains(event.target as Node) && isNotificationsOpen) {
+        setNotificationsOpen(false);
+      }
+    };
+    
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [isNotificationsOpen]);
   
   // Profile password state
   const [profilePassword, setProfilePassword] = useState('');
@@ -302,6 +315,63 @@ export const AppPage = () => {
             >
               {theme === 'light' ? <Moon size={20}/> : <Sun size={20}/>}
             </button>
+            
+            {/* Notifications Bell */}
+            <div className="relative" ref={notificationsRef}>
+              <button 
+                onClick={() => setNotificationsOpen(!isNotificationsOpen)}
+                className="p-3 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 relative"
+                title="Notificações"
+              >
+                <Bell size={20} />
+                {notifications.some(n => !n.read) && (
+                  <span className="absolute top-1 right-1 w-2.5 h-2.5 bg-rose-500 rounded-full border-2 border-white dark:border-slate-900"></span>
+                )}
+              </button>
+              
+              {/* Notifications Dropdown */}
+              {isNotificationsOpen && (
+                <div 
+                  className="absolute right-0 top-full mt-2 w-80 bg-white dark:bg-slate-800 rounded-xl shadow-xl border border-slate-100 dark:border-slate-700 z-50 overflow-hidden"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <div className="p-3 border-b border-slate-100 dark:border-slate-700 flex items-center justify-between">
+                    <h3 className="font-bold text-slate-900 dark:text-white text-sm">Notificações</h3>
+                    <button 
+                      onClick={() => markAllNotificationsAsRead()}
+                      className="text-xs font-bold text-emerald-600 hover:text-emerald-700"
+                    >
+                      Marcar todas como lidas
+                    </button>
+                  </div>
+                  <div className="max-h-80 overflow-y-auto">
+                    {notifications.length === 0 ? (
+                      <p className="p-4 text-sm text-slate-500 text-center">Sem notificações</p>
+                    ) : (
+                      notifications.slice(0, 10).map((notif) => (
+                        <div 
+                          key={notif.id} 
+                          className={`p-3 border-b border-slate-50 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700/50 cursor-pointer transition-colors ${
+                            !notif.read ? 'bg-emerald-50/50 dark:bg-emerald-900/10' : ''
+                          }`}
+                          onClick={() => markNotificationAsRead(notif.id)}
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <p className="text-sm text-slate-900 dark:text-white flex-1">{notif.message}</p>
+                            {notif.read && (
+                              <Check size={14} className="text-emerald-500 flex-shrink-0 mt-0.5" />
+                            )}
+                          </div>
+                          <p className="text-xs text-slate-400 mt-1">
+                            {new Date(notif.createdAt).toLocaleString('pt-PT')}
+                          </p>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
             
             {/* User Profile */}
             <div className="flex items-center gap-3 sm:gap-4 pl-4 sm:pl-6 border-l border-slate-100 dark:border-slate-800">

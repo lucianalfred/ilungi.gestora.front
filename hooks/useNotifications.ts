@@ -12,6 +12,7 @@ export const useNotifications = () => {
     notifications: context.notifications,
     setNotifications: context.setNotifications,
     addNotification: context.addNotification,
-    markAllNotificationsAsRead: context.markAllNotificationsAsRead
+    markAllNotificationsAsRead: context.markAllNotificationsAsRead,
+    markNotificationAsRead: context.markNotificationAsRead
   };
 };

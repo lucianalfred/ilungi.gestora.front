@@ -67,6 +67,7 @@ interface AppContextType {
   // Notifications
   addNotification: (userId: string, message: string, type?: 'info' | 'success' | 'error') => Promise<void>;
   markAllNotificationsAsRead: () => void;
+  markNotificationAsRead: (notificationId: string) => void;
   
   // Activities
   addSystemActivity: (activity: Omit<SystemActivity, 'id' | 'timestamp'>) => void;
@@ -738,7 +739,13 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
 
   const markAllNotificationsAsRead = () => {
     setNotifications(prev => 
-      prev.map(n => n.userId === user?.id ? { ...n, isRead: true } : n)
+      prev.map(n => n.userId === user?.id ? { ...n, read: true } : n)
+    );
+  };
+
+  const markNotificationAsRead = (notificationId: string) => {
+    setNotifications(prev => 
+      prev.map(n => n.id === notificationId ? { ...n, read: true } : n)
     );
   };
 
@@ -920,6 +927,7 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
     // Notifications
     addNotification,
     markAllNotificationsAsRead,
+    markNotificationAsRead,
     
     // Activities
     addSystemActivity,
