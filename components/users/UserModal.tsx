@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, AlertTriangle, Mail, User as UserIcon, Briefcase, Phone, Shield, Upload, Camera } from 'lucide-react';
+import { X, AlertTriangle, Mail, User as UserIcon, Briefcase, Phone, Shield } from 'lucide-react';
 import { Button } from '../shared/Button';
 import { User, UserRole } from '../../types';
 import { useLanguage } from '../../hooks/useLanguage';
@@ -27,16 +27,13 @@ export const UserModal = ({
   
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [avatarPreview, setAvatarPreview] = useState<string | null>(null);
-  const [avatarFile, setAvatarFile] = useState<File | null>(null);
   const [formData, setFormData] = useState({
     name: '',
     email: '',
     phone: '',
     position: '',
     department: '',
-    role: UserRole.EMPLOYEE,
-    avatar: ''
+    role: UserRole.EMPLOYEE
   });
 
   const editingUser = editingUserId 
@@ -62,10 +59,8 @@ export const UserModal = ({
         phone: editingUser.phone || '',
         position: editingUser.position || '',
         department: editingUser.department || '',
-        role: editingUser.role || UserRole.EMPLOYEE,
-        avatar: editingUser.avatar || ''
+        role: editingUser.role || UserRole.EMPLOYEE
       });
-      setAvatarPreview(editingUser.avatar || null);
     } else {
       setFormData({
         name: '',
@@ -73,12 +68,9 @@ export const UserModal = ({
         phone: '',
         position: '',
         department: '',
-        role: UserRole.EMPLOYEE,
-        avatar: ''
+        role: UserRole.EMPLOYEE
       });
-      setAvatarPreview(null);
     }
-    setAvatarFile(null);
     setError(null);
   }, [editingUser, editingUserId]);
 
@@ -126,33 +118,6 @@ export const UserModal = ({
     if (error) setError(null);
   };
 
-  const handleAvatarChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      if (!file.type.startsWith('image/')) {
-        setError('Por favor, selecione um arquivo de imagem válido.');
-        return;
-      }
-      if (file.size > 5 * 1024 * 1024) {
-        setError('A imagem deve ter no máximo 5MB.');
-        return;
-      }
-      setAvatarFile(file);
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setAvatarPreview(reader.result as string);
-      };
-      reader.readAsDataURL(file);
-      setError(null);
-    }
-  };
-
-  const handleAvatarRemove = () => {
-    setAvatarFile(null);
-    setAvatarPreview(null);
-    setFormData(prev => ({ ...prev, avatar: '' }));
-  };
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
@@ -169,24 +134,12 @@ export const UserModal = ({
           phone: formData.phone,
           position: formData.position,
           department: formData.department,
-          role: formData.role,
-          avatar: avatarPreview || ''
+          role: formData.role
         };
         
         await updateUser(editingUserId, updateData);
-        
-        // Também salvar no localStorage como backup
-        if (avatarPreview) {
-          localStorage.setItem(`gestora_avatar_${editingUserId}`, avatarPreview);
-        } else {
-          localStorage.removeItem(`gestora_avatar_${editingUserId}`);
-        }
       } else {
-        const userData = {
-          ...formData,
-          avatar: avatarPreview || ''
-        };
-        await createUser(userData);
+        await createUser(formData);
       }
       
       onSuccess();
@@ -241,54 +194,6 @@ export const UserModal = ({
         <form onSubmit={handleSubmit} className="w-full">
           <div className="space-y-4">
             
-            {/* FOTO DE PERFIL */}
-            <div className="flex flex-col items-center mb-6">
-              <div className="relative">
-                <div className="w-24 h-24 rounded-full bg-slate-200 dark:bg-slate-700 flex items-center justify-center overflow-hidden border-4 border-white dark:border-slate-600 shadow-md">
-                  {avatarPreview ? (
-                    <img 
-                      src={avatarPreview} 
-                      alt="Avatar" 
-                      className="w-full h-full object-cover"
-                    />
-                  ) : (
-                    <UserIcon className="w-10 h-10 text-slate-400" />
-                  )}
-                </div>
-                <label 
-                  htmlFor="avatar-upload" 
-                  className="absolute bottom-0 right-0 bg-emerald-500 hover:bg-emerald-600 text-white p-2 rounded-full cursor-pointer shadow-lg transition-colors"
-                  title="Carregar foto de perfil"
-                >
-                  <Camera size={16} />
-                  <input
-                    id="avatar-upload"
-                    type="file"
-                    accept="image/*"
-                    onChange={handleAvatarChange}
-                    className="hidden"
-                    disabled={isLoading}
-                    aria-label="Carregar foto de perfil"
-                  />
-                </label>
-                {avatarPreview && (
-                  <button
-                    type="button"
-                    onClick={handleAvatarRemove}
-                    className="absolute top-0 right-0 bg-rose-500 hover:bg-rose-600 text-white p-1.5 rounded-full shadow-lg transition-colors"
-                    disabled={isLoading}
-                    title="Remover foto"
-                    aria-label="Remover foto de perfil"
-                  >
-                    <X size={12} />
-                  </button>
-                )}
-              </div>
-              <p className="text-xs text-slate-400 mt-2">
-                Clique na câmera para alterar a foto
-              </p>
-            </div>
-
             {/* NOME COMPLETO */}
             <div>
               <label className="block text-xs font-bold uppercase text-slate-400 tracking-wider mb-1">
